@@ -1,0 +1,51 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.*
+.envrc
+
+# sqlx offline mode
+.sqlx/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Debug
+debug/
+
+# Temporary
+*.tmp
+*.bak
+*.log
+
+# Backup
+*~
+.#*
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Cargo
+Cargo.toml.orig

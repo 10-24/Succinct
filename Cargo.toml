@@ -1,0 +1,13 @@
+[package]
+name = "succinct"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+chrono = "0.4.44"
+compact_str = {version = "0.9.0", features = ["sqlx-sqlite","sqlx-postgres"]}
+futures = "0.3.32"
+rustc-hash = "2.1.1"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono"] }
+tokio = { version = "1", features = ["full"] }
