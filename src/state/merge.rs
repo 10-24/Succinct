@@ -1,52 +1,135 @@
-use sqlx::{Acquire, PgConnection, SqliteConnection};
+use sqlx::{PgConnection, SqliteConnection};
 
-use crate::state::{local::{self, QueuedUpdate}, remote, state::State};
+use crate::{
+    path::{AbsPath, Path},
+    state::{
+        file::File,
+        local::{self, QueuedDeletion, QueuedUpdate},
+        remote,
+        state::State,
+    },
+};
 
 impl State {
-    
-    async fn clear_queue(&mut self, conn: &mut Biconn,) -> sqlx::Result<()> {
-      
-        let mut result = Ok(());
-        let mut remote_txn = conn.remote.begin().await?;
-        
-        let deletion_records = local::get_delete_queue(&mut conn.local).await?;
-        for record in deletion_records {
-            if let Err(e) = remote::delete_file(&mut remote_txn, record.file_id, record.deleted_at).await {
-                result = Err(e);
-                continue;
-            }
-            local::remove_from_delete_queue(&mut conn.local, record.file_id).await.unwrap(); // IDK how to handle an err here
+    async fn clear_queue(&mut self, conn: &mut Biconn) -> Result<()> {
+        let mut result: Result<()> = Ok(());
+
+        let deletion_records = local::get_delete_queue(&mut conn.local)
+            .await
+            .map_err(Error::LocalDb)?;
+        for deletion in deletion_records {
+            let push_result = self
+                .process_queued_deletion(&mut conn.local, &mut conn.remote, deletion)
+                .await;
+            result = result.and(push_result);
         }
-        
-        let update_records = local::get_update_queue(&mut conn.local).await?;
-        for record in update_records {
-            let record_id = record.id;
-            if let Err(e) = remote::insert_file(&mut remote_txn, record).await {
-                result = Err(e);
-                continue;
-            }
-            local::remove_from_update_queue(&mut conn.local, record_id).await.unwrap() // IDK how to handle an err here
+
+        let update_records = local::get_update_queue(&mut conn.local)
+            .await
+            .map_err(Error::LocalDb)?;
+        for update in update_records {
+            let update_result = self
+                .process_queued_update(&mut conn.local, &mut conn.remote, update)
+                .await;
+            result = result.and(update_result);
         }
-        
-        remote_txn.commit().await.and(result)
-        
+
+        result
     }
-    
-    async fn push_update(&self, conn: &mut Biconn, update: QueuedUpdate) -> anyhow::Result<()> {
-        let file_path = local::get_file_path(&mut conn.local, update.file_id).await?;
-        let file_abs_path = self.local_root.join(&file_path);
-        let is_file = tokio::fs::metadata(file_abs_path.as_ref()).await?.is_file();
-        if !is_file {
-            return Ok(());
-        }
-        let file_content = tokio::fs::read(file_abs_path.as_ref()).await?;
-        self.remote_drive.write(file_path.as_ref(), file_content).await?;
+
+    async fn process_queued_update(
+        &mut self,
+        conn_local: &mut SqliteConnection,
+        remote: &mut PgConnection,
+        update: File,
+    ) -> Result<()> {
+        let file_id = update.id;
+        let path = self
+            .get_abs_path(conn_local, file_id)
+            .await
+            .map_err(Error::LocalDb)?;
+
+        self.save_to_drive(&path).await?;
+
+        remote::insert_file(remote, update)
+            .await
+            .map_err(Error::RemoteDb)?;
+
+        local::remove_from_update_queue(conn_local, file_id)
+            .await
+            .expect("Failed to remove update queue");
         Ok(())
     }
-    
+
+    async fn process_queued_deletion(
+        &self,
+        local_conn: &mut SqliteConnection,
+        remote: &mut PgConnection,
+        deletion: QueuedDeletion,
+    ) -> Result<()> {
+        let file_rel_path = local::get_file_path(local_conn, deletion.file_id)
+            .await
+            .map_err(Error::LocalDb)?;
+
+        self.remote_drive
+            .delete(file_rel_path.as_ref())
+            .await
+            .map_err(Error::RemoteDrive);
+
+        remote::delete_file(remote, deletion)
+            .await
+            .map_err(Error::RemoteDb)?;
+
+        local::remove_from_delete_queue(local_conn, deletion.file_id)
+            .await
+            .expect("Failed to remove delete queue");
+        Ok(())
+    }
+
+    async fn save_to_drive(&self, file_abs_path: &AbsPath) -> Result<()> {
+        let file_rel_path = file_abs_path.as_relative(&self.local_root);
+        let metadata: std::fs::Metadata = tokio::fs::metadata(file_abs_path.as_ref())
+            .await
+            .map_err(Error::LocalDrive)?;
+        if metadata.is_dir() {
+            return self
+                .remote_drive
+                .create_dir(file_rel_path)
+                .await
+                .map_err(Error::RemoteDrive);
+        }
+
+        let file_content: Vec<u8> = tokio::fs::read(file_abs_path.as_ref())
+            .await
+            .map_err(Error::LocalDrive)?;
+        self.remote_drive
+            .write(file_rel_path, file_content)
+            .await
+            .map_err(Error::RemoteDrive)?;
+        Ok(())
+    }
+
+    pub async fn get_abs_path(
+        &self,
+        conn_local: &mut SqliteConnection,
+        file_id: i64,
+    ) -> sqlx::Result<AbsPath> {
+        let rel_path = &local::get_file_path(conn_local, file_id).await?;
+        Ok(self.local_root.join(rel_path))
+    }
 }
 
 pub struct Biconn {
-    local: SqliteConnection, 
-    remote: PgConnection
+    local: SqliteConnection,
+    remote: PgConnection,
 }
+
+#[derive(Debug)]
+enum Error {
+    RemoteDb(sqlx::Error),
+    LocalDb(sqlx::Error),
+    RemoteDrive(opendal::Error),
+    LocalDrive(tokio::io::Error),
+}
+
+type Result<T> = anyhow::Result<T, Error>;

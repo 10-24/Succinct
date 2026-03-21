@@ -7,7 +7,7 @@ use crate::{path::Path, state::file::File};
 
 pub async fn insert_file(exec: &mut SqliteConnection, entry: File) -> sqlx::Result<()> {
     sqlx::query!(
-        "INSERT OR REPLACE INTO files (id, name, hash, modified_at, parent_id) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO file (id, name, hash, modified_at, parent_id) VALUES (?, ?, ?, ?, ?)",
         entry.id,
         entry.name,
         entry.hash,
@@ -21,7 +21,7 @@ pub async fn insert_file(exec: &mut SqliteConnection, entry: File) -> sqlx::Resu
 }
 
 pub async fn remove(exec: &mut SqliteConnection, id: i64) -> sqlx::Result<()> {
-    sqlx::query!("DELETE FROM files WHERE id = ?", id)
+    sqlx::query!("DELETE FROM file WHERE id = ?", id)
         .execute(exec)
         .await?;
     Ok(())
@@ -31,7 +31,7 @@ pub async fn remove_remote(
     exec: impl Executor<'_, Database = Postgres>,
     id: i64,
 ) -> sqlx::Result<()> {
-    sqlx::query("DELETE FROM files WHERE id = $1")
+    sqlx::query("DELETE FROM file WHERE id = $1")
         .bind(id)
         .execute(exec)
         .await?;
@@ -197,8 +197,8 @@ pub async fn get_file_path(exec: &mut SqliteConnection, file_id: i64) -> sqlx::R
     .fetch_all(exec)
     .await?;
 
-    let path = Path::from(components.join("/"));
-    Ok(path)
+  
+    Ok(Path::from(components.join("/")))
 }
 
 #[derive(Debug)]
@@ -207,7 +207,7 @@ pub struct QueuedUpdate {
     // pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone, Copy)]
 pub struct QueuedDeletion {
     pub file_id: i64,
     pub deleted_at: DateTime<Utc>,

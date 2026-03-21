@@ -3,22 +3,20 @@ use crate::{
     path::{AbsPath, Path},
     state::{
         file::File,
-        local::{self, QueuedDeletion, QueuedUpdate}, remote,
+        local::{self, QueuedDeletion, QueuedUpdate},
     },
 };
 use chrono::{DateTime, Utc};
-use compact_str::CompactString;
 use opendal::{Operator, services::Gdrive};
-use sqlx::{Connection, PgConnection, PgPool, Sqlite, SqliteConnection, Transaction};
+use sqlx::{Connection, PgConnection, Sqlite, SqliteConnection, Transaction};
 use std::{cell::RefCell, collections::BTreeSet};
-
 
 pub struct State {
     pub(crate) local_root: AbsPath,
     local_db: RefCell<SqliteConnection>,
     remote_db: RefCell<PgConnection>,
-    
-    pub(crate) remote_drive: Operator
+
+    pub(crate) remote_drive: Operator,
 }
 
 impl State {
@@ -30,14 +28,12 @@ impl State {
     // }
 
     pub async fn push_deltas(&mut self, mut deltas: BTreeSet<Delta>) -> sqlx::Result<()> {
-
-        
         let timestamp = Utc::now();
         let mut local_db = self.local_db.borrow_mut();
         let mut txn = local_db.begin().await?;
 
         while let Some(delta) = deltas.pop_last() {
-            deltas.extend(create_parent_delta(&delta));
+            try_insert_parent(&mut deltas, &delta);
 
             match delta.kind {
                 DeltaKind::Update => {
@@ -80,24 +76,37 @@ impl State {
         let subtree = descendants.into_iter().chain(Some(root_id));
 
         for id in subtree {
-            let record = QueuedDeletion { file_id: id, deleted_at };
+            let record = QueuedDeletion {
+                file_id: id,
+                deleted_at,
+            };
             local::delete_file(txn, record.file_id).await?;
             local::enqueue_delete(txn, record).await?;
         }
 
         Ok(())
     }
-
-    
 }
 
-fn create_parent_delta(delta: &Delta) -> Option<Delta> {
-    let parent = delta.path.parent()?;
-    Some(Delta {
-        path: parent,
+/// Attempts to create an implicit delta and avoids overwriting
+fn try_insert_parent(deltas: &mut BTreeSet<Delta>,delta: &Delta)  {
+    
+    let Some(parent_path) = delta.path.parent() else {
+        return
+    };
+    
+    let parent_delta = Delta {
+        path: parent_path,
         kind: DeltaKind::Update,
         depth: delta.depth - 1,
-    })
+    };
+    
+    if deltas.contains(&parent_delta) {
+        return
+    }
+    
+    deltas.insert(parent_delta);
+    
 }
 
 fn floor_mul(x: usize, y: f32) -> usize {
@@ -105,3 +114,4 @@ fn floor_mul(x: usize, y: f32) -> usize {
     let prod = x * y;
     prod as usize
 }
+

@@ -1,8 +1,7 @@
-use sqlx::{Executor, PgConnection, Postgres};
+use sqlx::{PgConnection};
 
-use chrono::{DateTime, Utc};
 
-use crate::state::file::File;
+use crate::state::{file::File, local::QueuedDeletion};
 
 pub async fn insert_file(exec: &mut PgConnection, entry: File) -> sqlx::Result<()> {
     sqlx::query(
@@ -66,10 +65,10 @@ pub async fn get_file_children_hashes(
     Ok(hashes.into_iter())
 }
 
-pub async fn delete_file(exec: &mut PgConnection, id: i64, modified_before: DateTime<Utc>) -> sqlx::Result<()> {
+pub async fn delete_file(exec: &mut PgConnection, deletion: QueuedDeletion) -> sqlx::Result<()> {
     let _ = sqlx::query("DELETE FROM files WHERE id = $1 AND modified_at <= $2")
-        .bind(id)
-        .bind(modified_before)
+        .bind(deletion.file_id)
+        .bind(deletion.deleted_at)
         .execute(exec)
         .await;
     Ok(())

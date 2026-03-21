@@ -31,11 +31,7 @@ impl File {
                 .parent()
                 .map(|parent| File::get_id(&parent))
                 .unwrap_or_default(),
-            name: path
-                .last()
-                .map(|l| CompactString::from(l))
-                .unwrap_or_default(),
-            
+            name: path.last().into(),
             modified_at: DateTime::default(),
             hash: i32::default(),
         };
