@@ -1,0 +1,9 @@
+[check]
+command = "check"
+
+[cargo]
+buildScripts.enable = false
+
+[diagnostics]
+enable = true
+experimental.enable = false

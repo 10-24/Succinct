@@ -1,45 +1,17 @@
-use std::{cmp::Ordering, ffi::{OsStr, OsString}};
-
-use anyhow::bail;
 use compact_str::CompactString;
-use inotify::{Event, EventMask};
+use inotify::{ EventMask};
 
-use crate::path::{AbsPath, Path};
+use crate::state::file_id::FileId;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug,Clone)]
 pub struct Delta {
-    pub path: Path,
+    pub file_name: CompactString,
     pub kind: DeltaKind,
     pub depth: u16,
+    pub ord: u16,
+    pub parent_id: FileId,
 }
 
-impl Ord for Delta {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.depth
-            .cmp(&other.depth)
-            .then_with(|| self.path.as_ref().cmp(other.path.as_ref()))
-    }
-}
-
-impl PartialOrd for Delta {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Delta {
-    pub fn from(event: Event<OsString>,root: &AbsPath) -> Self {
-      
-        let path = Path::new_relative(event.name.unwrap().to_str().unwrap(), root).unwrap();
-        let depth = path.depth() as u16;
-        let kind = event.mask.into();
-        Self {
-            depth,
-            path,
-            kind,
-        }
-    }
-}
 
 #[derive(Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Copy, Clone)]
 pub enum DeltaKind {

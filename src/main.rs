@@ -1,5 +1,5 @@
 use crate::config::{APP_NAME, Config, IGNORE_FILE_NAME, SETTINGS_FILE_NAME};
-
+use rustc_hash::{FxHashMap,FxBuildHasher};
 
 mod delta;
 mod path;
@@ -8,10 +8,12 @@ mod delta_emitter;
 mod config;
 mod watcher;
 mod path_cache;
+mod database;
 /*
  * Unimplemented Features:
-    * Error Notifications
+    * Handle if you update a child then delete the parent.
     * Watch new files
+    * Error Notifications
  */
 
 
@@ -22,3 +24,5 @@ async fn main() -> anyhow::Result<()> {
     
     Ok(())
 }
+
+

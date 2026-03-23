@@ -1,135 +1,87 @@
-use sqlx::{PgConnection, SqliteConnection};
+use std::fs::Metadata;
+
+use sqlx::PgExecutor;
+use tokio::fs;
 
 use crate::{
-    path::{AbsPath, Path},
-    state::{
-        file::File,
-        local::{self, QueuedDeletion, QueuedUpdate},
-        remote,
-        state::State,
-    },
+    database::remote_writer::RemoteWriter,
+    state::{file::File, remote_drive, state::State},
 };
 
 impl State {
-    async fn clear_queue(&mut self, conn: &mut Biconn) -> Result<()> {
-        let mut result: Result<()> = Ok(());
-
-        let deletion_records = local::get_delete_queue(&mut conn.local)
-            .await
-            .map_err(Error::LocalDb)?;
-        for deletion in deletion_records {
-            let push_result = self
-                .process_queued_deletion(&mut conn.local, &mut conn.remote, deletion)
-                .await;
-            result = result.and(push_result);
-        }
-
-        let update_records = local::get_update_queue(&mut conn.local)
-            .await
-            .map_err(Error::LocalDb)?;
-        for update in update_records {
-            let update_result = self
-                .process_queued_update(&mut conn.local, &mut conn.remote, update)
-                .await;
-            result = result.and(update_result);
-        }
-
-        result
-    }
-
-    async fn process_queued_update(
+    pub async fn clear_queue<'a, E>(
         &mut self,
-        conn_local: &mut SqliteConnection,
-        remote: &mut PgConnection,
-        update: File,
-    ) -> Result<()> {
-        let file_id = update.id;
-        let path = self
-            .get_abs_path(conn_local, file_id)
-            .await
-            .map_err(Error::LocalDb)?;
+        local_writer: &mut crate::database::local_writer::LocalWriter<'_>,
+        remote_writer: &mut RemoteWriter<'a, E>,
+    ) -> anyhow::Result<()>
+    where
+        E: PgExecutor<'a>,
+        for<'e> &'e E: PgExecutor<'e>,
+    {
+        let deletion_records = self.local_reader.get_delete_queue().await?;
+        for deletion in deletion_records {
+            let path = self
+                .local_reader
+                .get_file_path(deletion.file_id)
+                .await?
+                .unwrap();
+            let remote_path = self.remote_root.join(&path);
 
-        self.save_to_drive(&path).await?;
-
-        remote::insert_file(remote, update)
-            .await
-            .map_err(Error::RemoteDb)?;
-
-        local::remove_from_update_queue(conn_local, file_id)
-            .await
-            .expect("Failed to remove update queue");
-        Ok(())
-    }
-
-    async fn process_queued_deletion(
-        &self,
-        local_conn: &mut SqliteConnection,
-        remote: &mut PgConnection,
-        deletion: QueuedDeletion,
-    ) -> Result<()> {
-        let file_rel_path = local::get_file_path(local_conn, deletion.file_id)
-            .await
-            .map_err(Error::LocalDb)?;
-
-        self.remote_drive
-            .delete(file_rel_path.as_ref())
-            .await
-            .map_err(Error::RemoteDrive);
-
-        remote::delete_file(remote, deletion)
-            .await
-            .map_err(Error::RemoteDb)?;
-
-        local::remove_from_delete_queue(local_conn, deletion.file_id)
-            .await
-            .expect("Failed to remove delete queue");
-        Ok(())
-    }
-
-    async fn save_to_drive(&self, file_abs_path: &AbsPath) -> Result<()> {
-        let file_rel_path = file_abs_path.as_relative(&self.local_root);
-        let metadata: std::fs::Metadata = tokio::fs::metadata(file_abs_path.as_ref())
-            .await
-            .map_err(Error::LocalDrive)?;
-        if metadata.is_dir() {
-            return self
-                .remote_drive
-                .create_dir(file_rel_path)
-                .await
-                .map_err(Error::RemoteDrive);
+            remote_drive::delete(&self.remote_drive, &remote_path).await?;
+            // TODO: Remove from delete queue
         }
 
-        let file_content: Vec<u8> = tokio::fs::read(file_abs_path.as_ref())
-            .await
-            .map_err(Error::LocalDrive)?;
-        self.remote_drive
-            .write(file_rel_path, file_content)
-            .await
-            .map_err(Error::RemoteDrive)?;
+        let updated_files = self.local_reader.get_update_queue().await?;
+        for updated_file in updated_files {
+            self.process_queued_update(&self.local_reader, remote_writer, updated_file)
+                .await?;
+            // TODO: Remove from update queue
+        }
+
         Ok(())
     }
 
-    pub async fn get_abs_path(
-        &self,
-        conn_local: &mut SqliteConnection,
-        file_id: i64,
-    ) -> sqlx::Result<AbsPath> {
-        let rel_path = &local::get_file_path(conn_local, file_id).await?;
-        Ok(self.local_root.join(rel_path))
+    async fn process_queued_update<'a, E>(
+        &mut self,
+        local_reader: &crate::database::local_reader::LocalReader,
+        remote_writer: &mut RemoteWriter<'a, E>,
+        updated_file: File,
+    ) -> anyhow::Result<()>
+    where
+        E: PgExecutor<'a>,
+        for<'e> &'e E: PgExecutor<'e>,
+    {
+        let file_id = updated_file.id;
+
+        let path = local_reader.get_file_path(file_id).await?.unwrap();
+        let abs_path = self.local_root.join(&path);
+        let rel_path = abs_path.as_relative(&self.local_root);
+
+        let metadata: Metadata = fs::metadata(abs_path.as_ref()).await?;
+        if metadata.is_dir() {
+            return Ok(self.remote_drive.create_dir(rel_path).await?);
+        }
+
+        let file_content: Vec<u8> = tokio::fs::read(abs_path.as_ref()).await?;
+
+        self.remote_drive.write(rel_path, file_content).await?;
+
+        remote_writer.insert_file(updated_file).await?;
+        Ok(())
     }
 }
 
-pub struct Biconn {
-    local: SqliteConnection,
-    remote: PgConnection,
-}
+// pub struct Biconn {
+//     local: SqliteConnection,
+//     remote: PgConnection,
+// }
 
-#[derive(Debug)]
-enum Error {
-    RemoteDb(sqlx::Error),
-    LocalDb(sqlx::Error),
-    RemoteDrive(opendal::Error),
-    LocalDrive(tokio::io::Error),
-}
+// #[derive(Debug)]
+// enum Error {
+//     RemoteDb(sqlx::Error),
+//     LocalDb(sqlx::Error),
+//     RemoteDrive(opendal::Error),
+//     LocalDrive(tokio::io::Error),
+// }
 
-type Result<T> = anyhow::Result<T, Error>;
+// type Result<T> = anyhow::Result<T, Error>;

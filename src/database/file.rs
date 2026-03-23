@@ -1,50 +1,40 @@
-use std::{
-    hash::{Hash, Hasher},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::hash::{Hash, Hasher};
 
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
+use derive_more::{Deref, From};
 use rustc_hash::FxHasher;
-use sqlx::FromRow;
-
-use crate::path::Path;
+use sqlx::{Decode, Encode, FromRow, Sqlite, prelude::Type};
+use crate::database::FileId;
 
 #[derive(Debug, Clone, FromRow, Default)]
 pub struct File {
-    pub id: i64,
+    pub id: FileId,
     pub name: CompactString,
-    pub parent_id: i64,
+    pub parent_id: FileId,
     pub hash: i32,
     pub modified_at: DateTime<Utc>,
 }
 
 impl File {
     pub fn new(
-        path: &Path,
+        name: impl Into<CompactString>,
+        parent_id: FileId,
         timestamp: DateTime<Utc>,
         child_hashes: impl Iterator<Item = i32>,
     ) -> Self {
+        let name = name.into();
+        let id = parent_id.child(&name);
         let mut self_ = Self {
-            id: File::get_id(path),
-            parent_id: path
-                .parent()
-                .map(|parent| File::get_id(&parent))
-                .unwrap_or_default(),
-            name: path.last().into(),
-            modified_at: DateTime::default(),
+            name,
+            parent_id,
+            id,
+            modified_at: timestamp,
             hash: i32::default(),
         };
 
         self_.update(child_hashes, timestamp);
         self_
-    }
-
-    pub fn get_id(path: &Path) -> i64 {
-        let mut hasher = FxHasher::default();
-        path.hash(&mut hasher);
-        let hash_64 = hasher.finish().to_ne_bytes();
-        i64::from_ne_bytes(hash_64)
     }
 
     pub fn update(&mut self, child_hashes: impl Iterator<Item = i32>, timestamp: DateTime<Utc>) {
@@ -61,6 +51,8 @@ impl File {
         let hash_32 = hash_64[..4].try_into().unwrap();
         self.hash = i32::from_ne_bytes(hash_32);
     }
+    
+   
 }
 
 impl Hash for File {
@@ -70,4 +62,3 @@ impl Hash for File {
         self.modified_at.hash(state);
     }
 }
-
