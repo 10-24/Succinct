@@ -3,48 +3,75 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use futures::future::try_join_all;
 
-use crate::{database::local_writer::LocalWriter, delta::{Delta, DeltaKind}, state::{file_id::{FileId, FileIdOrd}, state::State}};
-
+use crate::{
+    database::local_writer::LocalWriter,
+    delta::{Delta, DeltaKind},
+    state::{
+        file::File,
+        file_id::{FileId, FileIdOrd},
+        state::State,
+    },
+};
 
 impl State {
-    
-    pub(crate) async fn ensure_files_exist(&self, local_writer: &mut LocalWriter<'_>,deltas: &BTreeMap<FileIdOrd, Delta>, timestamp: DateTime<Utc>) -> sqlx::Result<()> {
+    pub(crate) async fn ensure_files_exist(
+        &self,
+        local_writer: &mut LocalWriter<'_>,
+        deltas: &BTreeMap<FileIdOrd, Delta>,
+        timestamp: DateTime<Utc>,
+    ) -> sqlx::Result<()> {
         for (id, delta) in deltas.iter() {
-            local_writer.ensure_file_exists(id, delta.file_name, timestamp, delta.parent_id).await?;
+            if delta.kind != DeltaKind::Create {
+                continue;
+            }
+            let file = File::empty(delta.file.name.to_owned(), id.depth, timestamp, delta.file.parent_id);
+            local_writer.ensure_file_exists(file).await?;
         }
         Ok(())
     }
-    
-    pub(crate) async fn populate_sparse_tree(&self, deltas: BTreeMap<FileIdOrd, Delta>) -> sqlx::Result<()> {
-        let implicit_deltas = deltas.iter().map(|(id, delta)| self.get_implict_deltas(**id, delta));
+
+    pub(crate) async fn complete_tree(
+        &self,
+        explicit_deltas: BTreeMap<FileIdOrd, Delta>,
+    ) -> sqlx::Result<FinalDeltas> {
+        let implicit_deltas = explicit_deltas
+            .iter()
+            .map(|(id, delta)| self.get_implict_deltas(*id, delta));
         let implicit_deltas = try_join_all(implicit_deltas).await?.into_iter().flatten();
-        // let implicit_delta_depths =
-        let mut populated_deltas = BTreeMap::new();
         
-        todo!()
-    }
-    
-    async fn get_implict_deltas(&self, id: FileId, delta: &Delta) -> sqlx::Result<BTreeMap<FileIdOrd,>> {
-        let ancestors = self.local_reader.get_file_ancestors(id).await?.into_iter();
-        
-        let mut implicit = ancestors.map(implicit_update(delta.ord));
+        let explicit_deltas = explicit_deltas
+            .into_iter()
+            .map(|(id, delta)| (id, DeltaValue::from(&delta)));
 
-        if delta.kind != DeltaKind::Delete {
-            let descendants:Vec<_> = self.local_reader.get_file_descendants(id).await?;
-            implicit.chain(descendants.into_iter().map(implicit_delete(delta.ord)));
+        let mut deltas = BTreeMap::new();
+
+        for delta in explicit_deltas.chain(implicit_deltas) {
+            try_insert(&mut deltas, delta);
         }
-        Ok(implicit)
+        Ok(deltas)
     }
 
-    fn has_newer_version(deltas: &FxHashMap<FileId, Delta_>, entry: (FileId, &Delta_)) -> bool {
-        deltas.get(&entry.0).is_some_and(|d| entry.1.ord <= d.ord)
+    async fn get_implict_deltas(
+        &self,
+        id: FileIdOrd,
+        delta: &Delta,
+    ) -> sqlx::Result<Vec<(FileIdOrd, DeltaValue)>> {
+        let ancestors = self.local_reader.get_file_ancestors(*id).await?.ok_or(sqlx::Error::RowNotFound)?;
+        let updated_ancestors = ancestors.map(implicit_update(delta.ord));
+       
+        if delta.kind != DeltaKind::Delete {
+            return Ok(updated_ancestors.collect());
+        }
+        let deleted_descendants = self.local_reader.get_file_descendants(*id).await?.into_iter().map(implicit_delete(delta.ord));
+        
+        Ok(updated_ancestors.chain(deleted_descendants).collect())
     }
 }
-fn implicit_update(ord: u16) -> impl Fn(FileId) -> (FileId, Delta) {
+fn implicit_update(ord: u16) -> impl Fn(FileIdOrd) -> (FileIdOrd, DeltaValue) {
     move |ancestor_id| {
         (
             ancestor_id,
-            Delta {
+            DeltaValue {
                 ord,
                 kind: DeltaKind::Update,
             },
@@ -52,14 +79,45 @@ fn implicit_update(ord: u16) -> impl Fn(FileId) -> (FileId, Delta) {
     }
 }
 
-fn implicit_delete(ord: u16) -> impl Fn(FileId) -> (FileId, Delta_) {
+fn implicit_delete(ord: u16) -> impl Fn(FileIdOrd) -> (FileIdOrd, DeltaValue) {
     move |ancestor_id| {
         (
             ancestor_id,
-            Delta_ {
+            DeltaValue {
                 ord,
                 kind: DeltaKind::Delete,
             },
         )
     }
 }
+
+fn try_insert(deltas: &mut FinalDeltas, delta: DeltaKV) {
+    let prev_entry = deltas.entry(delta.0);
+    prev_entry
+        .and_modify(|prev_entry| {
+            if delta.1.ord > prev_entry.ord {
+                *prev_entry = delta.1;
+            }
+        })
+        .or_insert(delta.1);
+}
+
+pub type FinalDeltas = BTreeMap<FileIdOrd, DeltaValue>;
+
+#[derive(Debug, Clone, Copy)]
+pub struct DeltaValue {
+    pub kind: DeltaKind,
+    pub ord: u16,
+}
+
+impl DeltaValue {
+    pub fn from(delta: &Delta) -> Self {
+        Self {
+            kind: delta.kind,
+            ord: delta.ord,
+        }
+    }
+}
+
+pub type DeltaKV = (FileIdOrd, DeltaValue);
+type FullDeltaKV = (FileIdOrd, Delta);

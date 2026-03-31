@@ -1,9 +1,9 @@
-use std::{collections::BTreeSet, mem, ops::DerefMut, sync::Arc, time::Duration};
+use std::{collections::{BTreeMap, BTreeSet}, mem, ops::DerefMut, sync::Arc, time::Duration};
 
 
 use tokio::{sync::{Mutex, mpsc}, time::sleep};
 
-use crate::delta::Delta;
+use crate::delta::{Delta, Deltas};
 
 pub struct DeltaEmitter {
     tx: mpsc::Sender<Deltas>,
@@ -38,5 +38,3 @@ impl DeltaEmitter {
 }
 
 pub type DeltaReceiver = mpsc::Receiver<Deltas>;
-
-pub type Deltas = BTreeSet<Delta>;

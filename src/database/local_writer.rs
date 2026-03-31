@@ -1,8 +1,7 @@
 use derive_more::{From, Into};
-use sqlx::{SqliteExecutor, SqlitePool, SqliteTransaction, sqlite::{SqliteConnectOptions, SqlitePoolOptions}};
-use std::marker::PhantomData;
-use crate::{config::DATABASE_WRITE_CONNECTIONS, database::{QueuedDeletion, QueuedUpdate}, state::file::{File, FileId}};
-use compact_str::CompactString;
+use sqlx::{SqliteTransaction, sqlite::{SqliteConnectOptions, SqlitePoolOptions}};
+use sqlx::SqlitePool;
+use crate::{config::DATABASE_WRITE_CONNECTIONS, database::{QueuedDeletion, QueuedUpdate}, state::{file::File, file_id::FileId}};
 use chrono::DateTime;
 use chrono::Utc;
 
@@ -76,7 +75,7 @@ impl<'a> LocalWriter<'a> {
     
     
     
-    pub async fn remove_from_update_queue(&mut self, id: FileId) -> sqlx::Result<()> {
+    pub async fn dequeue_update(&mut self, id: FileId) -> sqlx::Result<()> {
         sqlx::query!("DELETE FROM queued_update WHERE file_id = ?", id)
             .execute(&mut *self.txn)
             .await?;
@@ -84,7 +83,7 @@ impl<'a> LocalWriter<'a> {
         Ok(())
     }
     
-    pub async fn remove_from_delete_queue(&mut self, id: FileId) -> sqlx::Result<()> {
+    pub async fn dequeue_delete(&mut self, id: FileId) -> sqlx::Result<()> {
         sqlx::query!("DELETE FROM queued_delete WHERE file_id = ?", id)
             .execute(&mut *self.txn)
             .await?;
@@ -92,7 +91,7 @@ impl<'a> LocalWriter<'a> {
         Ok(())
     }
     
-    pub async fn modify_file(&mut self, id: FileId, hash: i32, modified_at: DateTime<Utc>) -> sqlx::Result<()> {
+    pub async fn update_file(&mut self, id: FileId, hash: i32, modified_at: DateTime<Utc>) -> sqlx::Result<()> {
         sqlx::query!(
             "UPDATE file SET hash = ?, modified_at = ? WHERE id = ?",
             hash,
@@ -105,14 +104,8 @@ impl<'a> LocalWriter<'a> {
         Ok(())
     }
     
-    pub async fn ensure_file_exists(&mut self, id: FileId, name: impl Into<CompactString>, modified_at: DateTime<Utc>, parent_id: FileId) -> sqlx::Result<()> {
-        let file = File {
-            id,
-            name: name.into(),
-            parent_id: id,
-            hash: 0,
-            modified_at,
-        };
+    pub async fn ensure_file_exists(&mut self, file: File) -> sqlx::Result<()> {
+        
         sqlx::query!(
             "INSERT OR IGNORE INTO file (id, name, hash, modified_at, parent_id) VALUES (?, ?, ?, ?, ?)",
             file.id,
@@ -125,5 +118,5 @@ impl<'a> LocalWriter<'a> {
         .await?;
         
         Ok(())
-    }
+    } 
 }

@@ -1,4 +1,5 @@
 use std::ops::Deref;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -7,6 +8,8 @@ use std::hash::{Hash, Hasher};
 use compact_str::{CompactString, format_compact};
 use derive_more::Deref;
 use serde::{Deserialize, Serialize};
+
+use crate::config::INTERNAL_ROOT_NAME;
 
 #[derive(Debug, Clone, Deref)]
 pub struct RelPath(Rc<str>);
@@ -21,7 +24,7 @@ impl RelPath {
     }
 
     pub fn is_root(&self) -> bool {
-        self.0.len() == 0
+        INTERNAL_ROOT_NAME == self.0.as_ref()
     }
 }
 // /// Never starts or ends with a '/'
@@ -156,16 +159,16 @@ impl PathKind for Local {}
 impl PathKind for Remote {}
 
 /// Never ends with a '/'
-#[derive(Debug, Clone, Deref, Default, Serialize,Deserialize)]
+#[derive(Debug, Clone, Deref, Default, Serialize, Deserialize)]
 pub struct AbsPath<K: PathKind> {
     #[deref]
-    inner: Rc<str>,
+    inner: Box<str>,
     _marker: std::marker::PhantomData<K>,
 }
 impl<K: PathKind> AbsPath<K> {
     pub fn new(mut path: &str) -> Self {
         path = path.trim_end_matches("/");
-        let path = Rc::from(path);
+        let path = Box::from(path);
         Self {
             inner: path,
             _marker: std::marker::PhantomData,
@@ -183,6 +186,14 @@ impl<K: PathKind> AbsPath<K> {
     pub fn as_relative(&self, root: &Self) -> &str {
         &self.inner[root.len() + 1..]
     }
+    
+    pub fn from_os_path(path: impl AsRef<Path>) -> Self {
+        Self::new(path.as_ref().to_str().unwrap())
+    }
+    
+    pub fn file_name(&self) -> &str {
+        self.inner.split('/').last().unwrap()
+    }
 }
 impl<K: PathKind> AsRef<str> for AbsPath<K> {
     fn as_ref(&self) -> &str {
@@ -190,28 +201,3 @@ impl<K: PathKind> AsRef<str> for AbsPath<K> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AnyPath {
-    rel: RelPath,
-    local_root: AbsPath<Local>,
-    remote_root: AbsPath<Remote>,
-}
-impl AnyPath {
-    pub fn new(rel: RelPath, local_root: AbsPath<Local>, remote_root: AbsPath<Remote>) -> Self {
-        Self {
-            rel,
-            local_root,
-            remote_root,
-        }
-    }
-
-    pub fn relative(&self) -> &RelPath {
-        &self.rel
-    }
-    pub fn local_absolute(&self) -> AbsPath<Local> {
-        self.local_root.join(&self.rel)
-    }
-    pub fn remote_absolute(&self) -> AbsPath<Remote> {
-        self.remote_root.join(&self.rel)
-    }
-}

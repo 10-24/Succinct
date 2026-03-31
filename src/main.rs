@@ -1,3 +1,4 @@
+#[cfg(target_os = "linux")]
 use crate::config::{APP_NAME, Config, IGNORE_FILE_NAME, SETTINGS_FILE_NAME};
 use rustc_hash::{FxHashMap,FxBuildHasher};
 
@@ -12,8 +13,11 @@ mod database;
 /*
  * Unimplemented Features:
     * Handle if you update a child then delete the parent.
+    * Fix Root Id
     * Watch new files
     * Error Notifications
+    * Add and remove ignored file from the command line
+    * Add check in walk dir for uninitialized files
  */
 
 

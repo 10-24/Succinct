@@ -22,7 +22,7 @@ impl FileId {
     }
 
     pub fn is_root(&self) -> bool {
-        self == &ROOT_ID
+        *self == *ROOT_ID
     }
 }
 
@@ -38,10 +38,17 @@ fn as_i64(n: usize) -> i64 {
     i64::from_ne_bytes(hash_64)
 }
 
-#[derive(Debug,PartialEq, Eq, PartialOrd, Ord,Deref)]
+#[derive(Debug,Clone,Copy, PartialEq, Eq, PartialOrd, Ord, Deref)]
 /// Can be used like a typical FileId, but has an additional depth field for ordering.
 pub struct FileIdOrd {
     pub depth: u16, // Must be first
     #[deref]
-    pub file_id: FileId,
+    pub value: FileId,
+}
+
+impl FileIdOrd {
+    pub fn child(&self, name: &str) -> Self {
+        let child_id = self.value.child(name);
+        Self { depth: self.depth + 1, value: child_id }
+    }
 }

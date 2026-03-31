@@ -1,7 +1,7 @@
 pub use crate::database::file;
 pub use crate::database::file_id;
 use crate::{FxBuildHasher, FxHashMap};
-mod merge;
+mod push;
 mod remote_drive;
 mod state;
 mod prepare_deltas;

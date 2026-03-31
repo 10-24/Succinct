@@ -1,8 +1,7 @@
 use std::time::Duration;
 
 use crate::{
-    path::{AbsPath, Local, Remote},
-    state::file::FileId,
+    path::{AbsPath, Local, Remote}, state::file_id::{FileId, FileIdOrd},
 };
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
@@ -10,14 +9,15 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 pub const APP_NAME: &str = "succinct";
 pub const SETTINGS_FILE_NAME: &str = "succinct.toml"; // In config directory
 pub const IGNORE_FILE_NAME: &str = ".succinctignore";
-pub const ROOT_PARENT_ID: FileId = FileId(0);
-pub const ROOT_ID: FileId = FileId(-4513623453135682776);
+pub const ROOT_PARENT_ID: FileIdOrd = FileIdOrd { depth: 0, value: FileId(0) };
+pub const ROOT_ID: FileIdOrd = FileIdOrd { depth: 1, value: FileId(-4513623453135682776) };
 pub const DATABASE_READ_CONNECTIONS:u32 = 4;
 pub const DATABASE_WRITE_CONNECTIONS:u32 = 1;
+pub const INTERNAL_ROOT_NAME: &str = ".";
 const LOCAL_DATABASE_FILE_NAME: &str = "local_state.db";
 const LOCAL_DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_DEBOUNCE_DURATION: Duration = Duration::from_secs(3);
-const DEFAULT_ROOT_NAME: &str = "sync";
+const DEFAULT_ROOT_DIR_NAME: &str = "Sync";
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -27,10 +27,6 @@ pub struct Config {
     /// Optional
     #[serde(default = "default_debounce_duration")]
     pub debounce_duration: Duration,
-
-    /// Optional
-    #[serde(default = "default_root_dir")]
-    pub local_root_path: AbsPath<Local>,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -39,14 +35,14 @@ struct RemoteConfig {
     pub database_url: Box<str>,
 
     /// Optional
-    #[serde(default = "default_root_dir")]
+    #[serde(default = "default_remote_root_dir")]
     pub root_path: AbsPath<Remote>,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 struct LocalConfig {
     /// Optional
-    #[serde(default = "default_root_dir")]
+    #[serde(default = "default_local_root_dir")]
     pub root_path: AbsPath<Local>,
 }
 
@@ -72,9 +68,13 @@ fn default_debounce_duration() -> Duration {
     DEFAULT_DEBOUNCE_DURATION
 }
 
-fn default_root_dir() -> AbsPath<Local> {
-    let path = dirs::home_dir().unwrap().join(DEFAULT_ROOT_NAME);
+fn default_local_root_dir() -> AbsPath<Local> {
+    let path = dirs::home_dir().unwrap().join(DEFAULT_ROOT_DIR_NAME);
     AbsPath::new(&path.to_string_lossy())
+}
+
+fn default_remote_root_dir() -> AbsPath<Remote> {
+    AbsPath::new(DEFAULT_ROOT_DIR_NAME)
 }
 
 pub fn database_config() -> SqliteConnectOptions {
