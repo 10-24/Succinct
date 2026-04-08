@@ -1,16 +1,21 @@
-use std::{collections::BTreeMap, ops::Not};
+use std::{collections::BTreeMap};
 
 use compact_str::CompactString;
 use inotify::{ EventMask, WatchMask};
+use tokio::sync::mpsc;
 
-use crate::state::file_id::{FileId, FileIdOrd};
+use crate::{state::file_id::{FileId, FileIdOrd}, tree_sitter::predelta::Predelta};
 
 pub type Deltas = BTreeMap<FileIdOrd,Delta>;
+
 #[derive(Debug,Clone)]
 pub struct Delta {
     pub file: FileRecord,
     pub kind: DeltaKind,
+    pub index: u16,
 }
+
+
 
 
 #[derive(Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Copy, Clone)]
@@ -24,7 +29,7 @@ impl DeltaKind {
     pub const WATCH_MASK: WatchMask = Self::CREATE_MASKS.union(Self::UPDATE_MASKS).union(Self::DELETE_MASKS);
         
     const CREATE_MASKS: WatchMask = WatchMask::CREATE.union(WatchMask::MOVED_TO);
-    const UPDATE_MASKS: WatchMask = WatchMask::MODIFY;
+    const UPDATE_MASKS: WatchMask = WatchMask::CLOSE_WRITE;
     const DELETE_MASKS: WatchMask = WatchMask::DELETE.union(WatchMask::MOVED_FROM);
     
     pub fn from_event_mask(mask:EventMask) -> DeltaKind {
@@ -53,3 +58,6 @@ pub struct FileRecord {
     pub name: CompactString,
     pub parent_id: FileId
 }
+
+pub type DeltaSender = mpsc::Sender<Deltas>;
+pub type DeltaReceiver = mpsc::Receiver<Deltas>;

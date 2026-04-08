@@ -19,7 +19,7 @@ use crate::{
         file_id::{FileId, FileIdOrd},
     },
 };
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct LocalReader {
     pool: SqlitePool,
 }
@@ -179,7 +179,7 @@ impl LocalReader {
 
     pub async fn get_file_path(&self, file_id: FileId) -> sqlx::Result<Option<RelPath>> {
         if let Some(components) = self.get_path_components(file_id).await? {
-            let path = RelPath::from(components.join("/"));
+            let path = RelPath::new(components.join("/"));
             return Ok(Some(path));
         };
         Ok(None)

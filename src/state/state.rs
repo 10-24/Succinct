@@ -19,13 +19,20 @@ use std::collections::BTreeMap;
 pub struct State {
     pub(crate) write_pool: SqlitePool,
     pub(crate) local_reader: LocalReader,
-    pub(crate) remote_db: PgPool,
-    pub(crate) remote_drive: RemoteDrive,
+    // pub(crate) remote_db: PgPool,
+    pub(crate) remote_drive: opendal::Operator,
     pub(crate) local_root: AbsPath<Local>,
 }
 
 impl State {
-    
+    pub fn new(write_pool: SqlitePool, local_reader: LocalReader, remote_drive: opendal::Operator, local_root: AbsPath<Local>) -> Self {
+        Self {
+            write_pool,
+            local_reader,
+            remote_drive,
+            local_root,
+        }
+    }
     
     /// File and Folder creations cannot be implicit (Eg. If a parent and child file/folder are created, both must be included)
     pub async fn push_deltas(&mut self, deltas: BTreeMap<FileIdOrd,Delta>) -> sqlx::Result<()> {
@@ -39,14 +46,16 @@ impl State {
         let mut update_files_txn = self.write_pool.begin().await?.into();
         while let Some(delta) = deltas.pop_last() {
             match delta.1.kind {
-                DeltaKind::Update => self.handle_update(&mut update_files_txn, delta, timestamp).await?,
+                DeltaKind::Update | DeltaKind::Create => self.handle_modify(&mut update_files_txn, delta, timestamp).await?,
                 DeltaKind::Delete => self.handle_delete(&mut update_files_txn, delta, timestamp).await?,
             }
         }
         update_files_txn.txn.commit().await
     }
+    
 
-    async fn handle_update(
+    /// Handles both Update and Create
+    async fn handle_modify(
         &self,
         local_writer: &mut LocalWriter<'_>,
         delta: DeltaKV,

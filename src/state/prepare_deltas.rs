@@ -20,10 +20,7 @@ impl State {
         deltas: &BTreeMap<FileIdOrd, Delta>,
         timestamp: DateTime<Utc>,
     ) -> sqlx::Result<()> {
-        for (id, delta) in deltas.iter() {
-            if delta.kind != DeltaKind::Create {
-                continue;
-            }
+        for (id, delta) in deltas.iter() { 
             let file = File::empty(delta.file.name.to_owned(), id.depth, timestamp, delta.file.parent_id);
             local_writer.ensure_file_exists(file).await?;
         }
@@ -54,12 +51,13 @@ impl State {
     async fn get_implict_deltas(
         &self,
         id: FileIdOrd,
+        file_id: &FileIdOrd,
         delta: &Delta,
     ) -> sqlx::Result<Vec<(FileIdOrd, DeltaValue)>> {
         let ancestors = self.local_reader.get_file_ancestors(*id).await?.ok_or(sqlx::Error::RowNotFound)?;
-        let updated_ancestors = ancestors.map(implicit_update(delta.ord));
+        let updated_ancestors = ancestors.map(implicit_update(file_id.ord));
        
-        if delta.kind != DeltaKind::Delete {
+        if delta.1.kind != DeltaKind::Delete {
             return Ok(updated_ancestors.collect());
         }
         let deleted_descendants = self.local_reader.get_file_descendants(*id).await?.into_iter().map(implicit_delete(delta.ord));
