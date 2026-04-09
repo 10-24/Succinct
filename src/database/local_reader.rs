@@ -1,215 +1,174 @@
-use std::iter;
+use std::{collections::LinkedList, sync::Arc};
 
-use compact_str::CompactString;
-use futures::future::try_join_all;
-use sqlx::{
-    Executor, Postgres, SqliteConnection, SqlitePool,
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+use derive_more::Deref;
+use redb::{
+    AccessGuard, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, ReadTransaction, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition
 };
-
-use chrono::{DateTime, Utc};
-use tokio::{join, try_join};
+use rustc_hash::FxHashSet;
+use tokio::sync::Mutex;
 
 use crate::{
-    config::{DATABASE_READ_CONNECTIONS, INTERNAL_ROOT_NAME, ROOT_ID, ROOT_PARENT_ID},
-    database::QueuedDeletion,
-    path::RelPath,
-    state::{
-        file::File,
-        file_id::{FileId, FileIdOrd},
-    },
+    config::{INTERNAL_ROOT_NAME, ROOT_ID, ROOT_PARENT_ID}, database::{QueuedDeletion, local_writer::DbWriter}, hashset, path::RelPath, state::file::{File, bytes::FileBytes, id::{FileId, FileIdOrd}, name::FileName}, tree_sitter::tree_sitter::FileKV
 };
-#[derive(Debug,Clone)]
-pub struct LocalReader {
-    pool: SqlitePool,
+
+pub const FILES: TableDefinition<FileId, &FileBytes> = TableDefinition::new("files");
+pub type FilesTable<'a> = ReadOnlyTable<FileId, &'a FileBytes>;
+pub const CHILDREN: MultimapTableDefinition<FileId, FileId> = MultimapTableDefinition::new("children");
+pub type ChildrenTable = ReadOnlyMultimapTable<FileId, FileId>;
+pub const QUEUED_UPDATES: TableDefinition<FileId, ()> = TableDefinition::new("queued_updates");
+pub const QUEUED_DELETES: TableDefinition<FileId, Vec<u8>> = TableDefinition::new("queued_deletes");
+
+#[derive(Debug, Clone)]
+pub struct Db {
+    database: Arc<redb::Database>,
+    write_lock: Arc<Mutex<()>>
 }
 
-impl LocalReader {
-    pub async fn init(options: SqliteConnectOptions) -> Self {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(DATABASE_READ_CONNECTIONS)
-            .connect_with(options)
-            .await
-            .unwrap();
-        Self { pool }
+impl Db {
+    pub async fn init(database: redb::Database) -> Self {
+        let db = Self { database: Arc::new(database), write_lock: Arc::default() };
+        let writer = db.begin_write().await;
+        writer.ensure_tables();
+        writer.commit();
+        db
+    }
+    
+    pub async fn begin_write(&self) -> DbWriter {
+        let guard = self.write_lock.lock().await;
+        let txn = self.database.begin_write().unwrap();
+        DbWriter { txn, guard }
+    }
+    
+    pub fn db(&self) -> &Arc<redb::Database> {
+        &self.database
     }
 
-    pub async fn get_file_child_hashes(
-        &self,
-        parent_id: FileId,
-    ) -> sqlx::Result<impl Iterator<Item = i32>> {
-        let hashes = sqlx::query_scalar!("SELECT hash FROM file WHERE parent_id = ?", parent_id)
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(hashes.into_iter().map(|h| h as i32))
+    pub fn get_file_child_hashes(&self, parent_id: FileId) -> Vec<i32> {
+        let txn = self.database.begin_read().unwrap();
+        let children_table = txn.open_multimap_table(CHILDREN).unwrap();
+        let files_table = txn.open_table(FILES).unwrap();
+
+        children_table
+            .get(&parent_id)
+            .unwrap()
+            .map(|guard| {
+                let child_id = guard.unwrap().value();
+                let bytes = files_table.get(&child_id).unwrap().unwrap();
+                bytes.value().hash
+            })
+            .collect()
+    }
+    pub fn get_file_ref<'a>(id: FileId,table: &'a FilesTable,) -> Option<&'a File> {
+        let bytes = table.get(id).unwrap()?.value();
+        Some(File::from_bytes(bytes))
+    }
+    
+    pub fn get_file_owned(&self, id: FileId) -> Option<File> {
+        let txn = self.database.begin_read().unwrap();
+        let table = txn.open_table(FILES).unwrap();
+    
+        Self::get_file_ref(id, &table).map(|f| f.to_owned())
     }
 
-    pub async fn get_file(&self, id: FileId) -> sqlx::Result<Option<File>> {
-        sqlx::query_as!(
-            File,
-            r#"
-            SELECT
-                id,
-                name,
-                hash as "hash: i32",
-                modified_at as "modified_at: DateTime<Utc>",
-                parent_id,
-                depth as "depth: u16",
-                created_at as "created_at: DateTime<Utc>"
-            FROM file
-            WHERE id = ?
-            "#,
-            id
-        )
-        .fetch_optional(&self.pool)
-        .await
-    }
-
-    pub async fn get_file_descendants(&self, parent_id: FileId) -> sqlx::Result<Vec<FileIdOrd>> {
-        sqlx::query_as!(
-            FileIdOrd,
-            r#"
-                WITH RECURSIVE descendants AS (
-                    SELECT id, depth FROM file WHERE id = ?
-                    UNION ALL
-                    SELECT f.id, f.depth
-                    FROM file f
-                    JOIN descendants d ON f.parent_id = d.id
-                )
-                SELECT
-                    id as "value: i64",
-                    COALESCE(depth, 0) as "depth: u16"
-                FROM descendants
-                WHERE id != ?
-                "#,
-            parent_id,
-            parent_id,
-        )
-        .fetch_all(&self.pool)
-        .await
-    }
-
-    pub async fn get_file_children_hashes(
-        &self,
-        parent_id: FileId,
-    ) -> sqlx::Result<impl Iterator<Item = i32>> {
-        let hashes = sqlx::query_scalar!("SELECT hash FROM file WHERE parent_id = ?", parent_id)
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(hashes.into_iter().map(|h| h as i32))
-    }
-
-    pub async fn get_update_queue(&self) -> sqlx::Result<Vec<File>> {
-        sqlx::query_as!(
-            File,
-            r#"
-            SELECT
-                file.id,
-                file.name,
-                file.hash as "hash: i32",
-                file.modified_at as "modified_at: DateTime<Utc>",
-                file.parent_id,
-                file.depth as "depth: u16",
-                file.created_at as "created_at: DateTime<Utc>"
-            FROM queued_update
-            INNER JOIN file ON queued_update.file_id = file.id
-            ORDER BY file.depth ASC
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await
-    }
-
-    pub async fn get_delete_queue(&self) -> sqlx::Result<Vec<QueuedDeletion>> {
-        sqlx::query_as!(
-            QueuedDeletion,
-            r#"
-            SELECT
-                file_id,
-                deleted_at as "deleted_at: DateTime<Utc>"
-            FROM queued_delete
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await
-    }
-
-    pub async fn file_exists(&self, file_id: FileId) -> sqlx::Result<bool> {
-        let exists =
-            sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM file WHERE id = ?)", file_id,)
-                .fetch_one(&self.pool)
-                .await?;
-
-        Ok(exists == 1)
-    }
-
-    pub async fn get_path_components(
-        &self,
-        file_id: FileId,
-    ) -> sqlx::Result<Option<Vec<CompactString>>> {
-        let mut components = vec![INTERNAL_ROOT_NAME.into()];
-
-        if file_id.is_root() {
-            return Ok(Some(components));
+    /// Excludes parent
+    pub fn get_file_descendants(&self, parent_id: FileIdOrd) -> Vec<FileIdOrd> {
+        
+        fn descendants(parent_id: FileIdOrd, children_table: &ChildrenTable, output: &mut Vec<FileIdOrd>) {
+            let mut children = children_table.get(*parent_id).unwrap();
+            while let Some(Ok(child_id)) = children.next(){
+                let child_id = child_id.value().into_ord(parent_id.depth + 1);
+                output.push(child_id);
+                descendants(child_id, children_table, output);
+            }
         }
+        
+        let txn = self.database.begin_read().unwrap();
+        let children_table = txn.open_multimap_table(CHILDREN).unwrap();
+        let mut output = Vec::new();
+        descendants(parent_id, &children_table, &mut output);
+        output
+    }
 
-        let non_root_components: Vec<CompactString> = sqlx::query_scalar!(
-            r#"
-                WITH RECURSIVE file_path AS (
-                    SELECT id, name, parent_id FROM file WHERE id = ?
-                    UNION ALL
-                    SELECT f.id, f.name, f.parent_id
-                    FROM file f
-                    JOIN file_path fp ON f.id = fp.parent_id
-                    WHERE f.depth != 0
-                )
-                SELECT name as "name: CompactString" FROM file_path
-                "#,
-            file_id,
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        if non_root_components.is_empty() {
-            return Ok(None);
+    fn all_ids(&self) -> FxHashSet<FileId> {
+        let txn = self.database.begin_read().unwrap();
+        let files = txn.open_table(FILES).unwrap();
+        
+        let mut ids = hashset(files.len().unwrap() as usize);
+        while let Some(Ok((id,_))) = files.iter().unwrap().next() {
+            ids.insert(id.value());
         }
-        components.extend(non_root_components);
-        Ok(Some(components))
+        ids
     }
 
-    pub async fn get_file_path(&self, file_id: FileId) -> sqlx::Result<Option<RelPath>> {
-        if let Some(components) = self.get_path_components(file_id).await? {
-            let path = RelPath::new(components.join("/"));
-            return Ok(Some(path));
-        };
-        Ok(None)
+    pub fn get_update_queue(&self) -> ReadGuard<impl Iterator<Item = (FileId, &File)>> {
+        let txn = self.database.begin_read().unwrap();
+        let updates_table = txn.open_table(QUEUED_UPDATES).unwrap();
+        let files_table = txn.open_table(FILES).unwrap();
+        
+        let files = updates_table
+            .iter()
+            .unwrap()
+            .map(|entry| {
+                let (id, _value) = entry.unwrap();
+                let id = id.value();
+                let file = Self::get_file_ref(id, &files_table).unwrap();
+                (id,file)
+            });
+        ReadGuard::new(files, txn)
     }
 
-    pub async fn get_file_ancestors(
-        &self,
-        file_id: FileId,
-    ) -> sqlx::Result<Option<impl Iterator<Item = FileIdOrd>>> {
-        let Some(components) = self.get_path_components(file_id).await? else {
-            return Ok(None);
-        };
+    pub fn get_delete_queue(&self) -> Vec<QueuedDeletion> {
+        let txn = self.database.begin_read().unwrap();
+        let table = txn.open_table(QUEUED_DELETES).unwrap();
 
-        let ancestor_ids = components
-            .into_iter()
-            .scan(ROOT_PARENT_ID, |last_id, component| {
-                *last_id = last_id.child(&component);
-                Some(*last_id)
-            }); 
-        Ok(Some(ancestor_ids))
+        table
+            .iter()
+            .unwrap()
+            .map(|entry| {
+                let (_, bytes) = entry.unwrap();
+                bincode::deserialize(&bytes.value()).unwrap()
+            })
+            .collect()
     }
 
-    pub async fn get_file_parent_id(&self, file_id: FileId) -> sqlx::Result<Option<FileId>> {
-        if file_id == *ROOT_ID {
-            return Ok(None);
+    pub fn get_file_path(&self, file_id: FileId) -> RelPath {
+        fn path_components<'a>(file_id:FileId, files_table: &'a FilesTable, components: &mut Vec<&'a FileName>){
+            let file = Db::get_file_ref(file_id, &files_table).unwrap();
+            components.push(&file.name);
+            if !file_id.is_root() {
+                path_components(file.parent_id, &files_table, components);
+            }
         }
-        let opt = sqlx::query_scalar!("SELECT parent_id FROM file WHERE id = ?", file_id)
-            .fetch_optional(&self.pool)
-            .await?
-            .map(FileId::from);
-        Ok(opt)
+        let txn = self.database.begin_read().unwrap();
+        
+        let files_table = txn.open_table(FILES).unwrap();
+        let mut components_rev = Vec::with_capacity(8);
+        path_components(file_id, &files_table, &mut components_rev);
+        
+        
+        RelPath::from_components(components_rev.into_iter().rev()).unwrap()
     }
+
+    /// Returns ancestors starting from root
+    pub fn get_file_ancestors(&self, file_id: FileId) -> impl Iterator<Item = FileIdOrd> {
+        
+        fn add_ancestors(file_id:FileId, files_table: &FilesTable, ancestors: &mut Vec<FileIdOrd>){
+            let file = Db::get_file_ref(file_id, &files_table).unwrap();
+            let parent_id = file.parent_id.into_ord(file.depth-1);
+            ancestors.push(parent_id);
+            if !file_id.is_root() {
+                add_ancestors(*parent_id, &files_table, ancestors);
+            }
+        }
+        
+        let txn = self.database.begin_read().unwrap();
+        
+        let files_table = txn.open_table(FILES).unwrap();
+        let mut ancestors = Vec::with_capacity(8);
+        add_ancestors(file_id, &files_table, &mut ancestors);
+        ancestors.into_iter().rev()
+    }
+
+
 }
+

@@ -1,6 +1,5 @@
 use std::ffi::OsString;
 
-use compact_str::CompactString;
 use inotify::{Event, EventMask};
 use rustc_hash::FxHashMap;
 
@@ -10,7 +9,7 @@ use crate::{delta::DeltaKind,};
 
 #[derive(Debug)]
 pub struct Predelta {
-    pub name: Option<CompactString>,
+    pub name: Option<String>,
     pub kind: DeltaKind,
     pub is_dir: bool,
 }

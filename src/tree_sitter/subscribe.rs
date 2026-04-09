@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use compact_str::CompactString;
 use futures::future::join_all;
 use ignore::gitignore::Gitignore;
 use tokio::{fs::{self}, io};
@@ -12,8 +11,8 @@ use crate::{
 };
 
 impl TreeSitter {
-    pub(crate) async fn subscribe_root(&mut self, root: AbsPath<Local>)  {
-        let root = WalkNode::root(root);
+    pub(crate) async fn subscribe_root(&mut self)  {
+        let root = WalkNode::root(self.root.clone());
         let subtree = Self::get_descendants(&root, &self.ignore).await.into_iter().flatten();
         
         for entry in subtree {
@@ -51,7 +50,7 @@ impl TreeSitter {
         let mut dir = fs::read_dir(parent.abs_path.as_ref()).await.unwrap();
 
         while let Some(entry) = dir.next_entry().await.unwrap() {
-            let entry_name = CompactString::from(entry.file_name().to_str().unwrap());
+            let entry_name = String::from(entry.file_name().to_str().unwrap());
             let is_dir = entry.file_type().await.unwrap().is_dir();
             let child_node = WalkNode::new(parent, entry_name, entry.path(), is_dir);
        
@@ -87,7 +86,7 @@ pub struct WalkNode {
 impl WalkNode {
     pub(crate) fn new(
         parent: &WalkNode,
-        name: CompactString,
+        name: String,
         path: PathBuf,
         is_dir: bool,
     ) -> WalkNode {

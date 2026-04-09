@@ -1,10 +1,9 @@
 use std::{collections::BTreeMap};
 
-use compact_str::CompactString;
 use inotify::{ EventMask, WatchMask};
 use tokio::sync::mpsc;
 
-use crate::{state::file_id::{FileId, FileIdOrd}, tree_sitter::predelta::Predelta};
+use crate::{state::{file::name::FileName, file_id::{FileId, FileIdOrd}}, tree_sitter::predelta::Predelta};
 
 pub type Deltas = BTreeMap<FileIdOrd,Delta>;
 
@@ -55,7 +54,7 @@ fn has_any(event: &EventMask, target: &WatchMask) -> bool {
 
 #[derive(Debug,Clone)]
 pub struct FileRecord {
-    pub name: CompactString,
+    pub name: FileName,
     pub parent_id: FileId
 }
 

@@ -1,122 +1,99 @@
-use derive_more::{From, Into};
-use sqlx::{SqliteTransaction, sqlite::{SqliteConnectOptions, SqlitePoolOptions}};
-use sqlx::SqlitePool;
-use crate::{config::DATABASE_WRITE_CONNECTIONS, database::{QueuedDeletion, QueuedUpdate}, state::{file::File, file_id::FileId}};
-use chrono::DateTime;
-use chrono::Utc;
+use std::sync::Arc;
 
-#[derive(From,Into)]
-pub struct LocalWriter<'q> {
-    pub txn: SqliteTransaction<'q>,
+use chrono::{DateTime, Utc};
+use redb::{ReadableDatabase, ReadableTable, WriteTransaction};
+use tokio::sync::MutexGuard;
+
+use crate::{
+    database::{
+        QueuedDeletion, QueuedUpdate,
+        local_reader::{CHILDREN, FILES, QUEUED_DELETES, QUEUED_UPDATES},
+    },
+    state::{file::{File, FileKV}, file_id::FileId},
+};
+
+pub struct DbWriter<'a> {
+    pub(crate) txn: WriteTransaction,
+    pub(crate) guard: MutexGuard<'a,()>
 }
 
-impl<'a> LocalWriter<'a> {
-    pub async fn init(options: SqliteConnectOptions) -> SqlitePool {
-        SqlitePoolOptions::new()
-            .max_connections(DATABASE_WRITE_CONNECTIONS)
-            .connect_with(options)
-            .await
-            .unwrap()
+
+
+impl DbWriter {
+    
+    
+    pub fn commit(self) {
+        self.txn.commit().unwrap();
     }
-    
-    pub async fn remove(&mut self, id: FileId) -> sqlx::Result<()> {
-        sqlx::query!("DELETE FROM file WHERE id = ?", id)
-            .execute(&mut *self.txn)
-            .await?;
-        Ok(())
+
+    pub fn ensure_tables(&self) {
+        self.txn.open_table(FILES).unwrap();
+        self.txn.open_multimap_table(CHILDREN).unwrap();
+        self.txn.open_table(QUEUED_UPDATES).unwrap();
+        self.txn.open_table(QUEUED_DELETES).unwrap();
     }
-    
-    pub async fn delete_file(&mut self, id: FileId) -> sqlx::Result<()> {
-        let _ = sqlx::query!("DELETE FROM file WHERE id = ?", id)
-            .execute(&mut *self.txn)
-            .await;
-        Ok(())
+
+    /// Removes a file from the files table and the children index.
+    /// Does nothing if the file doesn't exist.
+    pub fn delete_file(&self, id: FileId) {
+        let mut files = self.txn.open_table(FILES).unwrap();
+        let mut children = self.txn.open_multimap_table(CHILDREN).unwrap();
+
+        if let Some(bytes) = files.remove(&id.0).unwrap() {
+            let file: File = bincode::deserialize(&bytes.value()).unwrap();
+            children.remove(&file.parent_id.0, &id.0).unwrap();
+        }
     }
-    
-    pub async fn enqueue_update(&mut self, update: QueuedUpdate) -> sqlx::Result<()> {
-        sqlx::query!(
-            "DELETE FROM queued_delete where file_id = ?",
-            update.file_id
-        )
-        .execute(&mut *self.txn)
-        .await?;
-    
-        sqlx::query!(
-            "INSERT OR REPLACE INTO queued_update (file_id) VALUES (?)",
-            update.file_id,
-        )
-        .execute(&mut *self.txn)
-        .await?;
-    
-        Ok(())
+
+    /// Removes the file from the delete queue and adds it to the update queue.
+    pub fn enqueue_update(&self, update: QueuedUpdate) {
+        let mut queued_updates = self.txn.open_table(QUEUED_UPDATES).unwrap();
+        let mut queued_deletes = self.txn.open_table(QUEUED_DELETES).unwrap();
+
+        queued_deletes.remove(&update.file_id.0).unwrap();
+        queued_updates.insert(&update.file_id.0, &()).unwrap();
     }
-    
-    pub async fn enqueue_delete(
-        &mut self,
-        deletion: QueuedDeletion,
-    ) -> sqlx::Result<()> {
-        let _ = sqlx::query!(
-            "DELETE FROM queued_update where file_id = ?",
-            deletion.file_id
-        )
-        .execute(&mut *self.txn)
-        .await;
-    
-        sqlx::query!(
-            "INSERT OR REPLACE INTO queued_delete (file_id, deleted_at) VALUES (?, ?)",
-            deletion.file_id,
-            deletion.deleted_at,
-        )
-        .execute(&mut *self.txn)
-        .await?;
-    
-        Ok(())
+
+    /// Removes the file from the update queue and adds it to the delete queue.
+    pub fn enqueue_delete(&self, deletion: QueuedDeletion) {
+        let mut queued_updates = self.txn.open_table(QUEUED_UPDATES).unwrap();
+        let mut queued_deletes = self.txn.open_table(QUEUED_DELETES).unwrap();
+
+        queued_updates.remove(&deletion.file_id.0).unwrap();
+        let bytes = bincode::serialize(&deletion).unwrap();
+        queued_deletes.insert(&deletion.file_id.0, &bytes).unwrap();
     }
-    
-    
-    
-    pub async fn dequeue_update(&mut self, id: FileId) -> sqlx::Result<()> {
-        sqlx::query!("DELETE FROM queued_update WHERE file_id = ?", id)
-            .execute(&mut *self.txn)
-            .await?;
-    
-        Ok(())
+
+    pub fn dequeue_update(&self, id: FileId) {
+        let mut queued_updates = self.txn.open_table(QUEUED_UPDATES).unwrap();
+        queued_updates.remove(&id.0).unwrap();
     }
-    
-    pub async fn dequeue_delete(&mut self, id: FileId) -> sqlx::Result<()> {
-        sqlx::query!("DELETE FROM queued_delete WHERE file_id = ?", id)
-            .execute(&mut *self.txn)
-            .await?;
-    
-        Ok(())
+
+    pub fn dequeue_delete(&self, id: FileId) {
+        let mut queued_deletes = self.txn.open_table(QUEUED_DELETES).unwrap();
+        queued_deletes.remove(&id.0).unwrap();
     }
-    
-    pub async fn update_file(&mut self, id: FileId, hash: i32, modified_at: DateTime<Utc>) -> sqlx::Result<()> {
-        sqlx::query!(
-            "UPDATE file SET hash = ?, modified_at = ? WHERE id = ?",
-            hash,
-            modified_at,
-            id
-        )
-        .execute(&mut *self.txn)
-        .await?;
-    
-        Ok(())
-    }
-    
-    pub async fn ensure_file_exists(&mut self, file: File) -> sqlx::Result<()> {
+
+    /// Updates the hash and modified_at fields of an existing file.
+    pub fn update_file(&self, id: FileId, hash: i32, modified_at: DateTime<Utc>) {
+        let mut files = self.txn.open_table(FILES).unwrap();
+        let bytes = files.get(&id.0).unwrap().unwrap();
+        let mut file: File = bincode::deserialize(&bytes.value()).unwrap();
+        file.hash = hash;
+        file.modified_at = modified_at.timestamp();
         
-        sqlx::query!(
-            "INSERT OR IGNORE INTO file (id, name, hash, modified_at, parent_id) VALUES (?, ?, ?, ?, ?)",
-            file.id,
-            file.name,
-            file.hash,
-            file.modified_at,
-            file.parent_id
-        )
-        .execute(&mut *self.txn)
-        .await?;
-        
-        Ok(())
-    } 
+        files.insert(&id.0, &file).unwrap();
+    }
+
+ 
+    pub fn ensure_file_exists(&self, file: FileKV) {
+        let mut files = self.txn.open_table(FILES).unwrap();
+        let mut children = self.txn.open_multimap_table(CHILDREN).unwrap();
+
+        if files.get(file.id).unwrap().is_none() {
+            files.insert(file.id, file.as_bytes()).unwrap();
+            children.insert(&file.parent_id, &file.id).unwrap();
+        }
+    }
 }
+
