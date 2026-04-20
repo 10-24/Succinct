@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
-use opendal::{Operator, OperatorBuilder};
+use opendal::{Operator};
 
 use crate::{
-    config::{APP_NAME, LOCAL_DATABASE_DIR, config::Config},
-    path::{AbsPath, Local},
+    config::{APP_NAME, LOCAL_DATABASE_DIR, SUPPORTED_DRIVES_LINK, config::Config},
 };
 
 impl Config {
@@ -24,6 +23,16 @@ impl Config {
     pub async fn connect_remote_drive(&self) -> opendal::Operator {
         let drive_cfg = self.remote.drive.to_owned();
 
-        Operator::via_iter(drive_cfg.kind.as_ref(), drive_cfg.config.into_iter()).unwrap()
+        match Operator::via_iter(*drive_cfg.kind, drive_cfg.config) {
+            Ok(operator) => operator,
+            Err(err) => panic!("
+                Failed to connect remote-drive operator.
+                    Error: {err}
+                    Config: {:?}
+                See {SUPPORTED_DRIVES_LINK}
+            ",
+            &self.remote.drive),
+        }
+        
     }
 }

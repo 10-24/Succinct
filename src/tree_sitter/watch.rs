@@ -29,7 +29,7 @@ impl TreeSitter {
         }
     }
     
-    async fn output_deltas(&mut self,predeltas:UniquePredeltas){
+    pub(crate) async fn output_deltas(&mut self,predeltas:UniquePredeltas){
         let mut deltas = Deltas::default();
         for (i,predelta) in predeltas.into_iter().enumerate() {
             let predelta = predelta.into();

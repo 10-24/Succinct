@@ -1,11 +1,11 @@
-use crate::database::QueuedUpdate;
-use crate::database::file_id::FileId;
+use crate::db::tables::QueuedUpdate;
+use crate::state::file_id::FileId;
 
 use crate::state::file_id::FileIdOrd;
 use crate::state::prepare_deltas::DeltaKV;
 use crate::state::remote_drive::RemoteDrive;
 use crate::{
-    database::{QueuedDeletion, local_reader::Db, local_writer::DbWriter},
+    db::{Db, DbWriter, tables::QueuedDeletion},
     delta::{Delta, DeltaKind},
     path::{AbsPath, Local},
     state::file::File,
@@ -22,7 +22,6 @@ pub struct State {
 
 impl State {
     pub fn new(
-        local_writer: DbWriter,
         local_reader: Db,
         remote_drive: opendal::Operator,
         local_root: AbsPath<Local>,
@@ -51,18 +50,15 @@ impl State {
     }
 
     /// Handles both Update and Create
-    fn handle_modify(&self, delta: DeltaKV, modified_at: DateTime<Utc>) {
-        let file_id = delta.0.value;
+    fn handle_modify(&self, (id, delta): DeltaKV, modified_at: DateTime<Utc>) {
 
-        let child_hashes = self.local_reader.get_file_child_hashes(file_id);
-        let file_hash = File::calculate_hash(file_id, modified_at, child_hashes.into_iter());
+
+        let child_hashes = self.local_reader.get_file_child_hashes(id);
+        let file_hash = File::calculate_hash(id, modified_at, child_hashes.into_iter());
         self.local_writer
-            .update_file(file_id, file_hash, modified_at);
+            .update_file(id, file_hash, modified_at);
 
-        let queued_update = QueuedUpdate {
-            file_id,
-            depth: delta.0.depth,
-        };
+     
         self.local_writer.enqueue_update(queued_update);
     }
 

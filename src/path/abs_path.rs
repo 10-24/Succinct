@@ -1,9 +1,9 @@
-use std::{ops::Deref, path::{Path, PathBuf}};
+use std::{ops::Deref, path::{Path}};
 
 use ignore::gitignore::Gitignore;
 use serde::{Deserialize, Serialize};
 
-use crate::{config::INTERNAL_ROOT_NAME, path::RelPath};
+use crate::{config::ROOT_NAME, path::RelPath};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Local;
@@ -28,24 +28,43 @@ impl<K: PathKind> AbsPath<K> {
     }
 
     pub fn child(&self, file_name: &str) -> Self {
-        let new_path = format!("{}/{}", self.as_ref(), file_name);
+        let new_path = format!("{self}/{file_name}");
         Self::new(new_path)
     }
 
     pub fn join(&self, path: &RelPath) -> Self {
-        let excess = &path.as_ref()[INTERNAL_ROOT_NAME.len() + 1..];
-        let new_path = format!("{}/{}", self.as_ref(), excess);
+        let excess = &path.as_ref()[ROOT_NAME.len() + 1..];
+        let new_path = format!("{self}/{excess}");
         Self::new(new_path)
     }
 
     pub fn file_name(&self) -> &str {
-        self.inner.split('/').last().unwrap()
+        for (i,c) in self.inner.char_indices().rev() {
+            if c == '/' {
+                return &self.inner[i + 1..];
+            }
+        }
+        &self.inner
     }
     
-    pub fn is_ignored(&self, is_dir: bool, ignore: &Gitignore,) -> bool {
-        ignore.matched(self.as_ref(), is_dir).is_ignore()
+    
+    pub fn from_os_path(path: impl AsRef<Path> ) -> Self {
+        let path = path.as_ref();
+        debug_assert!(path.is_absolute());
+        Self::new(path.to_string_lossy())
     }
 
+    pub fn as_str(&self) -> &str {
+        &self.inner
+    }
+    
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+    
+    pub fn starts_with(&self, other: &AbsPath<K>) -> bool {
+        self.as_str().starts_with(other.as_str())
+    }
 }
 
 impl<K: PathKind> AsRef<str> for AbsPath<K> {
@@ -53,13 +72,13 @@ impl<K: PathKind> AsRef<str> for AbsPath<K> {
         &self.inner
     }
 }
-impl<K: PathKind> Deref for AbsPath<K> {
-    type Target = str;
 
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+impl<K: PathKind> AsRef<Path> for AbsPath<K> {
+    fn as_ref(&self) -> &Path {
+        Path::new(self.as_str())
     }
 }
+
 
 impl From<&Path> for AbsPath<Local> {
     fn from(path: &Path) -> Self {

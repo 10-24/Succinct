@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    database::local_writer::DbWriter,
+    db::writer::DbWriter,
     delta::{Delta, DeltaKind},
     state::{file::File, file_id::FileIdOrd, state::State},
 };
@@ -15,6 +15,9 @@ impl State {
         timestamp: DateTime<Utc>,
     ) {
         for (id, delta) in deltas.iter() {
+            if DeltaKind::Create != delta.kind {
+                continue;
+            }
             let file = File::empty(
                 delta.file.name.to_owned(),
                 id.depth,

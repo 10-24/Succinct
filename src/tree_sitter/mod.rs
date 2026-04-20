@@ -3,4 +3,4 @@ pub mod tree_sitter;
 mod convert_predelta;
 mod subscribe;
 mod watch;
-pub mod predelta;
+pub mod event;

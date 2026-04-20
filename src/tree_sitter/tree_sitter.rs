@@ -1,74 +1,45 @@
-use std::ffi::OsString;
+use std::sync::Arc;
 
-use ignore::gitignore::Gitignore;
-use inotify::{Event, EventMask, Inotify, Watches};
+use globset::GlobSet;
+use inotify::{Inotify, Watches};
 use rustc_hash::FxHashMap;
 use tokio::sync::mpsc;
 
 use crate::{
-    database::local_reader::Db,
-    delta::{Delta, DeltaKind, DeltaReceiver, DeltaSender, FileRecord},
+    db::Db,
+    delta::{DeltaReceiver, DeltaSender,},
     path::{AbsPath, Local},
-    state::file_id::{FileId, FileIdOrd},
 };
+use crate::db::tables::file::FileId;
 
 pub struct TreeSitter {
     pub(crate) inotify_watch_list: Watches,
-    pub(crate) descriptors_to_file_ids: FxHashMap<i32, FileIdOrd>,
-    pub(crate) file_ids_to_records: FxHashMap<FileId, FileRecord>,
+    pub(crate) descriptors: FxHashMap<i32, FileId>,
     pub(crate) root: AbsPath<Local>,
-    pub(crate) ignore: Gitignore,
+    pub(crate) ignore:Arc<GlobSet>,
     pub(crate) db: Db,
     pub(crate) output_tx: DeltaSender,
 }
 
 impl TreeSitter {
-    pub fn start(root: AbsPath<Local>, ignore: Gitignore, db: Db) -> DeltaReceiver {
+    pub fn start(root: AbsPath<Local>, ignore: GlobSet, db: Db) -> DeltaReceiver {
         let inotify = Inotify::init().unwrap();
-
+        
         let (output_tx, output_rx) = mpsc::channel(4);
         let mut tree_sitter = Box::from(Self {
-            descriptors_to_file_ids: FxHashMap::default(),
-            file_ids_to_records: FxHashMap::default(),
+            descriptors: FxHashMap::default(),
             inotify_watch_list: inotify.watches(),
             root: root.clone(),
             ignore,
             output_tx,
             db,
         });
-        
+
         tokio::spawn(async move {
-            tree_sitter.subscribe_root().await;
+            tree_sitter.subscribe_subtree().await;
             tree_sitter.watch(inotify).await;
         });
         output_rx
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FileKV {
-    pub id: FileIdOrd,
-    pub record: FileRecord,
-}
-
-impl FileKV {
-    pub fn from_parent(parent_id: FileIdOrd, name: String) -> Self {
-        let id = parent_id.child(&name);
-        let record = FileRecord {
-            parent_id: *parent_id,
-            name,
-        };
-        Self { id, record }
-    }
-    pub fn into_delta_fn(kind: DeltaKind, index:u16) -> impl Fn(Self) -> (FileIdOrd, Delta) {
-        move |file| {
-            let delta = Delta {
-                file: file.record,
-                kind,
-                index,
-            };
-            (file.id, delta)
-        }
     }
 }
 

@@ -9,7 +9,7 @@ use colored::Colorize;
 use derive_more::Deref;
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{path::Path, str::FromStr, sync::Arc, time::Duration};
 
 use tokio::io;
 
@@ -32,7 +32,7 @@ struct RemoteConfig {
 #[derive(Debug, Deserialize, Clone)]
 struct RemoteDriveConfig {
     pub kind: DriveKind,
-    pub config: FxHashMap<Box<str>, Box<str>>,
+    pub config: FxHashMap<String,String>,
 }
 
 #[derive(Default, Debug, Deserialize)]
@@ -93,13 +93,16 @@ fn default_remote_root_dir() -> AbsPath<Remote> {
     AbsPath::new(DEFAULT_ROOT_DIR_NAME)
 }
 
-pub fn panic_required_file<T>(path: impl Into<AbsPath<Local>>) -> impl FnOnce(io::Error) -> T {
+pub fn panic_required_file<T>(path: &AbsPath<Local>) -> impl FnOnce(io::Error) -> T {
     move |err: io::Error| {
-        let path = path.into();
         let file_name = path.file_name();
+
         match err.kind() {
             io::ErrorKind::NotFound => {
-                panic!("File not found: {path}\n Are sure {file_name} exists?")
+                panic!("
+                    File not found: {path}
+                    Are sure {file_name} exists?
+                ")
             }
             _ => panic!("Failed to read file: {path}\n Error: {err}",),
         }

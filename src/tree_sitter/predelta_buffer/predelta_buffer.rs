@@ -4,14 +4,14 @@ use futures::Stream;
 use tokio::sync::{Mutex, mpsc::{self, Receiver}};
 use tokio_stream::StreamExt;
 
-use crate::{hashmap, hashset, tree_sitter::{predelta::PredeltaKV, predelta_buffer::debouncer::DebouncedTx}};
+use crate::{hashmap, hashset, tree_sitter::{event::EventKV, predelta_buffer::debouncer::DebouncedTx}};
 
 
 
 /// Queues predeltas until for a specified time (debounced). Then outputs them.
 pub struct PredeltaBuffer {
     debounced_tx: DebouncedTx,
-    buffer: Arc<Mutex<Vec<PredeltaKV>>>,
+    buffer: Arc<Mutex<Vec<EventKV>>>,
 }
 
 impl PredeltaBuffer {
@@ -24,7 +24,7 @@ impl PredeltaBuffer {
         (Self { debounced_tx, buffer }, rx)
     }
 
-    pub async fn add(&mut self,  predelta_kv: PredeltaKV) {
+    pub async fn add(&mut self,  predelta_kv: EventKV) {
         self.debounced_tx.restart();
         {
             let mut buffer = self.buffer.lock().await;
@@ -33,7 +33,7 @@ impl PredeltaBuffer {
     }
 
     async fn emitter(
-        buffer: Arc<Mutex<Vec<PredeltaKV>>>,
+        buffer: Arc<Mutex<Vec<EventKV>>>,
         output_tx: mpsc::Sender<UniquePredeltas>,
         mut debounced_rx: impl Stream<Item = ()> + Unpin,
     ) {
@@ -58,10 +58,10 @@ impl PredeltaBuffer {
 
 /// Use `into_iter` to iterate in proper order of creation
 #[derive(Debug)]
-pub struct UniquePredeltas(Vec<PredeltaKV>);
+pub struct UniquePredeltas(Vec<EventKV>);
 
 impl UniquePredeltas {
-    fn new(buffer: Vec<PredeltaKV>) -> Self {
+    fn new(buffer: Vec<EventKV>) -> Self {
         let mut prev = hashset(buffer.len());
         let mut unique = Vec::with_capacity(buffer.len());
         for predelta in buffer.into_iter().rev() {
@@ -75,7 +75,7 @@ impl UniquePredeltas {
 }
 
 impl IntoIterator for UniquePredeltas {
-    type Item = PredeltaKV;
+    type Item = EventKV;
     type IntoIter = Rev<IntoIter<Self::Item>>;
 
     fn into_iter(self) -> Self::IntoIter {

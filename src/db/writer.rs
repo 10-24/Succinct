@@ -1,43 +1,35 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use redb::{ReadableDatabase, ReadableTable, WriteTransaction};
+use redb::{ReadableTable, WriteTransaction};
 use tokio::sync::MutexGuard;
 
 use crate::{
-    database::{
-        QueuedDeletion, QueuedUpdate,
-        local_reader::{CHILDREN, FILES, QUEUED_DELETES, QUEUED_UPDATES},
+    db::tables::{CHILDREN, FILES, QUEUED_DELETES, QUEUED_UPDATES, file::FileIdOrd, macros::OpenWriteTable},
+    state::{
+        file::{File, FileKV},
+        file_id::FileId,
     },
-    state::{file::{File, FileKV}, file_id::FileId},
 };
 
-pub struct DbWriter<'a> {
+pub struct DbWriter {
     pub(crate) txn: WriteTransaction,
-    pub(crate) guard: MutexGuard<'a,()>
+    // pub(crate) guard: MutexGuard<'a, ()>,
 }
 
-
-
 impl DbWriter {
-    
-    
     pub fn commit(self) {
         self.txn.commit().unwrap();
     }
 
     pub fn ensure_tables(&self) {
-        self.txn.open_table(FILES).unwrap();
-        self.txn.open_multimap_table(CHILDREN).unwrap();
-        self.txn.open_table(QUEUED_UPDATES).unwrap();
-        self.txn.open_table(QUEUED_DELETES).unwrap();
+        tables_mut!(self, FILES, CHILDREN, QUEUED_UPDATES, QUEUED_DELETES);
     }
 
     /// Removes a file from the files table and the children index.
     /// Does nothing if the file doesn't exist.
     pub fn delete_file(&self, id: FileId) {
-        let mut files = self.txn.open_table(FILES).unwrap();
-        let mut children = self.txn.open_multimap_table(CHILDREN).unwrap();
+        let (files,children) = tables_mut!(self,FILES,CHILDREN);
 
         if let Some(bytes) = files.remove(&id.0).unwrap() {
             let file: File = bincode::deserialize(&bytes.value()).unwrap();
@@ -46,31 +38,28 @@ impl DbWriter {
     }
 
     /// Removes the file from the delete queue and adds it to the update queue.
-    pub fn enqueue_update(&self, update: QueuedUpdate) {
-        let mut queued_updates = self.txn.open_table(QUEUED_UPDATES).unwrap();
-        let mut queued_deletes = self.txn.open_table(QUEUED_DELETES).unwrap();
+    pub fn enqueue_update(&self, id: FileIdOrd) {
+        let (queued_updates,queued_deletes) = tables_mut!(self,QUEUED_UPDATES,QUEUED_DELETES);
 
-        queued_deletes.remove(&update.file_id.0).unwrap();
-        queued_updates.insert(&update.file_id.0, &()).unwrap();
+        queued_deletes.remove(id).unwrap();
+        queued_updates.insert(id,()).unwrap();
     }
 
     /// Removes the file from the update queue and adds it to the delete queue.
-    pub fn enqueue_delete(&self, deletion: QueuedDeletion) {
-        let mut queued_updates = self.txn.open_table(QUEUED_UPDATES).unwrap();
-        let mut queued_deletes = self.txn.open_table(QUEUED_DELETES).unwrap();
+    pub fn enqueue_delete(&self, id: FileIdOrd) {
+        let (queued_updates,queued_deletes) = tables_mut!(self,QUEUED_UPDATES,QUEUED_DELETES);
 
-        queued_updates.remove(&deletion.file_id.0).unwrap();
-        let bytes = bincode::serialize(&deletion).unwrap();
-        queued_deletes.insert(&deletion.file_id.0, &bytes).unwrap();
+        queued_updates.remove(id).unwrap();
+        queued_deletes.insert(id,()).unwrap();
     }
 
     pub fn dequeue_update(&self, id: FileId) {
-        let mut queued_updates = self.txn.open_table(QUEUED_UPDATES).unwrap();
+        let queued_updates = tables_mut!(self,QUEUED_UPDATES);
         queued_updates.remove(&id.0).unwrap();
     }
 
     pub fn dequeue_delete(&self, id: FileId) {
-        let mut queued_deletes = self.txn.open_table(QUEUED_DELETES).unwrap();
+        let queued_deletes = tables_mut!(self,QUEUED_DELETES);
         queued_deletes.remove(&id.0).unwrap();
     }
 
@@ -81,11 +70,10 @@ impl DbWriter {
         let mut file: File = bincode::deserialize(&bytes.value()).unwrap();
         file.hash = hash;
         file.modified_at = modified_at.timestamp();
-        
+
         files.insert(&id.0, &file).unwrap();
     }
 
- 
     pub fn ensure_file_exists(&self, file: FileKV) {
         let mut files = self.txn.open_table(FILES).unwrap();
         let mut children = self.txn.open_multimap_table(CHILDREN).unwrap();
@@ -96,4 +84,3 @@ impl DbWriter {
         }
     }
 }
-

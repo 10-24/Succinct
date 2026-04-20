@@ -3,19 +3,22 @@ use std::{collections::BTreeMap};
 use inotify::{ EventMask, WatchMask};
 use tokio::sync::mpsc;
 
-use crate::{state::{file::name::FileName, file_id::{FileId, FileIdOrd}}, tree_sitter::predelta::Predelta};
+use crate::{db::tables::file::{FileIdOrd, info::FileInfo}, state::file::{id::{FileId, FileIdOrd}, name::FileName}};
 
 pub type Deltas = BTreeMap<FileIdOrd,Delta>;
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone, Copy)]
 pub struct Delta {
-    pub file: FileRecord,
-    pub kind: DeltaKind,
+    pub kind: DeltaData,
     pub index: u16,
 }
 
-
-
+#[derive(Debug,Clone, Copy)]
+pub enum DeltaData {
+    Create(FileInfo),
+    Update,
+    Delete,
+}
 
 #[derive(Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Copy, Clone)]
 pub enum DeltaKind {
@@ -60,3 +63,5 @@ pub struct FileRecord {
 
 pub type DeltaSender = mpsc::Sender<Deltas>;
 pub type DeltaReceiver = mpsc::Receiver<Deltas>;
+
+pub type DeltaKV = (FileIdOrd, Delta);

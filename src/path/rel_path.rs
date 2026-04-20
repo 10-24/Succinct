@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use derive_more::Deref;
 
-use crate::{config::INTERNAL_ROOT_NAME, state::file::name::FileName};
+use crate::{config::ROOT_NAME, state::file::name::FileName};
 
 #[derive(Debug, Clone, Deref)]
 pub struct RelPath(Rc<str>);
@@ -14,7 +14,7 @@ impl RelPath {
     }
 
     pub fn is_valid(path_str: &str) -> bool {
-        path_str.starts_with(INTERNAL_ROOT_NAME) && !path_str.ends_with('/')
+        path_str.starts_with(ROOT_NAME.as_str()) && !path_str.ends_with('/')
     }
 
     pub fn depth(&self) -> usize {
@@ -22,7 +22,7 @@ impl RelPath {
     }
 
     pub fn is_root(&self) -> bool {
-        INTERNAL_ROOT_NAME == self.0.as_ref()
+        ROOT_NAME.as_str() == self.0.as_ref()
     }
 
     pub fn child(&self, name: &str) -> Self {
@@ -32,7 +32,7 @@ impl RelPath {
     }
 
     pub fn root() -> Self {
-        Self(INTERNAL_ROOT_NAME.into())
+        Self(ROOT_NAME.as_str().into())
     }
     
     pub fn from_components<T: AsRef<FileName>>(components: impl Iterator<Item = T>) -> Option<Self> {
@@ -44,6 +44,10 @@ impl RelPath {
             path.push_str(component.as_ref().as_str());
         }
         Self::new(path)
+    }
+    
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

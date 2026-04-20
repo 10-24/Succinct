@@ -1,69 +1,79 @@
-use crate::{delta::{Delta, DeltaKind}, path::{AbsPath, Local}, state::file_id::FileIdOrd, tree_sitter::{subscribe::WalkNode, tree_sitter::{FileKV, PredeltaKV, TreeSitter, WatchDescriptor}}};
+use colored::Colorize;
+use smallvec::{SmallVec, smallvec};
+
+use crate::{
+    db::tables::file::{FileName, info::FileInfo}, delta::{Delta, DeltaKV, DeltaKind}, path::{AbsPath, Local}, state::file_id::FileIdOrd, tree_sitter::{
+        event::{EventKV, WatchDescriptor},
+        subscribe::WalkNode,
+        tree_sitter::{FileKV, TreeSitter},
+    }
+};
 
 impl TreeSitter {
-    
-    pub(crate) async fn convert_predelta(&mut self, predelta: PredeltaKV, index: u16) -> impl Iterator<Item = (FileIdOrd,Delta)> {
-        let kind = predelta.value.kind;
+    pub(crate) async fn convert_predelta(
+        &mut self,
+        event: EventKV,
+        index: u16,
+    ) -> SmallVec<[DeltaKV;2]> {
+        let kind = event.value.kind;
         let files = match kind {
-            DeltaKind::Update => vec![self.get_file(predelta.descriptor).to_owned()],
-            DeltaKind::Create => self.handle_create(predelta).await,
-            DeltaKind::Delete => self.handle_delete(predelta),
+            DeltaKind::Update => self.handle_update(event),
+            DeltaKind::Create => self.handle_create(event).await,
+            DeltaKind::Delete => self.handle_delete(event),
         };
-        files.into_iter().map(FileKV::into_delta_fn(kind,index))
+  
     }
-
-    async fn handle_create(&mut self, predelta: PredeltaKV) -> Vec<FileKV> {
-        let parent_file = self.get_file(predelta.descriptor);
-        let child_file = FileKV::from(parent_file.id, predelta.value.name.unwrap());
-
-        let parent_path = self
-            .db
-            .get_file_path(*parent_file.id)
-            .await
-            .unwrap()
-            .unwrap();
-        let child_path = self.root.join(&parent_path.child(&child_file.record.name));
-
-        if child_path.is_ignored(predelta.value.is_dir, &self.ignore) {
-            return vec![];
-        }
+    
+    async fn handle_create(&mut self, event: EventKV) -> SmallVec<[DeltaKV;2]> {
         
-        self.add_new_subtree(child_path, child_file, predelta.value.is_dir).await
+        let parent_id = *self.descriptors.get(&event.descriptor).unwrap();
+        let parent_rel_path = self.db.get_file_path(parent_id);
+        let name = event.name.unwrap().to_str().unwrap();
+        let rel_path = &parent_rel_path.child(name);
+        if self.ignore.is_match(rel_path.as_str()) {
+            return smallvec![];
+        }
+        let id = parent_id.child(&name);
+        let abs_path = self.root.join(rel_path);
+        let Some(name) = FileName::from(name) else {
+            panic!("Unignored file has invalid name: {}",name);
+        };
+        
+        let new_subtree_root = WalkNode {
+            abs_path,
+            id,
+            info: FileInfo {
+                is_dir: event.value.is_dir,
+                name,
+                parent_id,
+            }
+        };
+
+
+        let files = match self.subscribe_new_subtree(&new_subtree_root).await {
+            Ok(files) => files,
+            Err(e) => {
+                eprintln!("Failed to watch entry: {:?}", e);
+                smallvec![new_subtree_root.info]
+            }
+        };
+        files.into_iter().map(|f| ())
     }
+    fn handle_update(&mut self, event: EventKV) -> Vec<DeltaKV> {
+        
+    }
+    fn handle_delete(&mut self, event: EventKV) -> Vec<FileKV> {
+        let parent_file = self.get_file(event.descriptor);
+        let child_file = FileKV::from(parent_file.id, event.value.name.unwrap());
 
-    fn handle_delete(&mut self, predelta: PredeltaKV) -> Vec<FileKV> {
-        let parent_file = self.get_file(predelta.descriptor);
-        let child_file = FileKV::from(parent_file.id, predelta.value.name.unwrap());
-
-        self.file_ids_to_records.remove(&*child_file.id); // Leaks the descriptor
-
+      
         vec![child_file]
     }
 
     fn get_file(&self, descriptor: WatchDescriptor) -> FileKV {
-        let id = self
-            .descriptors_to_file_ids
-            .get(&descriptor)
-            .unwrap()
-            .to_owned();
+        let id = self.descriptors.get(&descriptor).unwrap().to_owned();
         let record = self.file_ids_to_records.get(&*id).unwrap().to_owned();
         FileKV { id, record }
     }
-    
-    async fn add_new_subtree(&mut self, abs_path: AbsPath<Local>, file:FileKV, is_dir:bool) -> Vec<FileKV> {
-        let node = WalkNode {
-            abs_path,
-            is_dir,
-            file:file.clone(),
-        };
-        
-        let watch_res = self
-            .subscribe_subtree(node)
-            .await;
-        if let Ok(files) = watch_res {
-            return files;
-        };
-        eprintln!("Failed to watch entry: {:?}", watch_res);
-        return vec![file];
-    }
+
 }

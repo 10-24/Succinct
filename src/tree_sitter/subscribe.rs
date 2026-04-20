@@ -1,77 +1,82 @@
-use std::path::PathBuf;
+use std::io;
+use std::{future, iter, path::PathBuf, sync::Arc};
 
-use futures::future::join_all;
-use ignore::gitignore::Gitignore;
-use tokio::{fs::{self}, io};
+use async_walkdir::{DirEntry, Filtering, WalkDir};
+
+use futures::{Stream, StreamExt, pin_mut, stream};
+use smallvec::{SmallVec, smallvec};
+
+use crate::db::tables::FILES;
+use crate::tables;
+
+
 
 use crate::{
-    config::{INTERNAL_ROOT_NAME, ROOT_ID, ROOT_PARENT_ID},
-    delta::{DeltaKind, FileRecord},
-    path::{AbsPath, Local}, tree_sitter::tree_sitter::{FileKV, TreeSitter},
+    db::tables::file::{FileId, FileName},
+    delta::{DeltaKind},
+    path::{AbsPath, Local},
+    state::file::{id::FileId, name::FileName},
+    tree_sitter::tree_sitter::{TreeSitter},
 };
 
 impl TreeSitter {
-    pub(crate) async fn subscribe_root(&mut self)  {
-        let root = WalkNode::root(self.root.clone());
-        let subtree = Self::get_descendants(&root, &self.ignore).await.into_iter().flatten();
+    pub(crate) async fn subscribe_subtree(&mut self, start_path: AbsPath<Local>, start_id: FileId) -> io::Result<Vec<(FileId,WalkNode)>> {
+        let subtree = self.stream_subtree(self.root.clone());
+        pin_mut!(subtree);
         
-        for entry in subtree {
-            self.subscribe(entry).unwrap();
-        }
-        self.subscribe(root).unwrap();
-    }
-    
-    pub(crate) async fn subscribe_subtree(&mut self, start: WalkNode) -> io::Result<Vec<FileKV>> {
-   
-        let subtree = if start.is_dir {
-            Some(Self::get_descendants(&start, &self.ignore).await.into_iter().flatten())
-        } else {
-            None
-        }.into_iter().flatten();
-        
+        let start_prefix_len = start_path.len();
+        let existing_files = tables!(&self.db, FILES);
         let mut new_files = Vec::new();
-      
-        for entry in subtree {
-            new_files.push(entry.file.clone());
-            self.subscribe(entry)?;
-        }
-        new_files.push(start.file.clone());
-        self.subscribe(start)?;
         
-        Ok(new_files)
-    }
-    
-    async fn get_descendants(
-        parent: &WalkNode,
-        ignore: &Gitignore,
-    ) -> Vec<Vec<WalkNode>> {
-        let mut children = Vec::new();
-        
-        let mut dir = fs::read_dir(parent.abs_path.as_ref()).await.unwrap();
-
-        while let Some(entry) = dir.next_entry().await.unwrap() {
-            let entry_name = String::from(entry.file_name().to_str().unwrap());
-            let is_dir = entry.file_type().await.unwrap().is_dir();
-            let child_node = WalkNode::new(parent, entry_name, entry.path(), is_dir);
-       
-            if child_node.abs_path.is_ignored(is_dir, ignore) {
-                children.push(child_node);
+        while let Some(node) = subtree.next().await {
+            debug_assert!(node.abs_path.starts_with(&start_path));
+            let extra_components = node.abs_path.as_str()[start_prefix_len..]
+                .split('/')
+                .filter_map(FileName::from);
+            let id = start_id.extend(extra_components);
+            
+            self.subscribe(id, &node.abs_path)?;
+            
+            let existing_file = existing_files.get(&id).unwrap();
+            if existing_file.is_none() {
+                new_files.push((id, node));
             }
         }
-
-        let descendants = children.iter().filter(|node| node.is_dir).map(|node| 
-            Self::get_descendants(node, ignore)
-        );
-        let mut descendants: Vec<Vec<_>> = join_all(descendants).await.into_iter().flatten().collect();
-        descendants.push(children);
-        descendants
+        Ok(new_files)
     }
-    
-    pub(crate) fn subscribe(&mut self, entry:WalkNode) -> io::Result<()>{
-        let descriptor = self.inotify_watch_list.add(entry.abs_path.as_ref(), DeltaKind::WATCH_MASK)?.get_watch_descriptor_id();
-        
-        self.descriptors_to_file_ids.insert(descriptor, entry.file.id);
-        self.file_ids_to_records.insert(*entry.file.id, entry.file.record);
+
+    fn stream_subtree(&self, root_path: AbsPath<Local>) -> impl Stream<Item = WalkNode> {
+        let root_node = WalkNode {
+            abs_path: root_path,
+            is_dir: true,
+        };
+        let ignore = self.ignore.clone();
+        let root_prefix_len = self.root.len() + 1;
+        let descendants = WalkDir::new(&root_node.abs_path)
+            .filter(move |file| {
+                let ignore = ignore.clone();
+                async move {
+                    let abs_path = file.path();
+                    let abs_path = abs_path.to_str().unwrap();
+                    let rel_path = &abs_path[root_prefix_len..];
+                    match ignore.is_match(rel_path) {
+                        true => Filtering::IgnoreDir,
+                        false => Filtering::Continue,
+                    }
+                }
+            })
+            .filter_map(async |f| f.ok())
+            .then(WalkNode::from_entry);
+
+        stream::once(future::ready(root_node)).chain(descendants)
+    }
+
+    fn subscribe(&mut self, id: FileId, path: &AbsPath<Local>) -> io::Result<()> {
+        let descriptor = self
+            .inotify_watch_list
+            .add(path, DeltaKind::WATCH_MASK)?
+            .get_watch_descriptor_id();
+        self.descriptors.insert(descriptor, id);
         Ok(())
     }
 }
@@ -80,40 +85,13 @@ impl TreeSitter {
 pub struct WalkNode {
     pub abs_path: AbsPath<Local>,
     pub is_dir: bool,
-    pub file: FileKV,
 }
 
 impl WalkNode {
-    pub(crate) fn new(
-        parent: &WalkNode,
-        name: String,
-        path: PathBuf,
-        is_dir: bool,
-    ) -> WalkNode {
-        let id = parent.file.id.child(&name);
-        let abs_path = AbsPath::from_os_path(path);
-        let record = FileRecord {
-            name,
-            parent_id: *parent.file.id,
-        };
+    pub async fn from_entry(entry: DirEntry) -> Self {
         WalkNode {
-            abs_path,
-            is_dir,
-            file: FileKV { id, record },
+            abs_path: AbsPath::from_os_path(entry.path()),
+            is_dir: entry.file_type().await.unwrap().is_dir(),
         }
     }
-    pub fn root(abs_path:AbsPath<Local>) -> Self {
-        WalkNode {
-            abs_path,
-            is_dir: true,
-            file: FileKV {
-                id: ROOT_ID,
-                record: FileRecord {
-                    name: INTERNAL_ROOT_NAME.into(),
-                    parent_id: *ROOT_PARENT_ID,
-                },
-            },
-        }
-    }
- 
 }
