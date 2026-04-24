@@ -4,7 +4,7 @@ use inotify::Inotify;
 use tokio::{select};
 use tokio_stream::StreamExt;
 
-use crate::{delta::Deltas, tree_sitter::{predelta_buffer::predelta_buffer::{PredeltaBuffer, UniquePredeltas}, tree_sitter::{PredeltaKV, Predeltas, TreeSitter}}};
+use crate::{delta::{DeltaKind, Deltas}, tree_sitter::{predelta_buffer::predelta_buffer::{PredeltaBuffer, UniqueEvents}, tree_sitter::{PredeltaKV, Predeltas, TreeSitter}}};
 
 const INOTIFY_BUFFER_SIZE: usize = 1024;
 const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(3);
@@ -29,14 +29,28 @@ impl TreeSitter {
         }
     }
     
-    pub(crate) async fn output_deltas(&mut self,predeltas:UniquePredeltas){
+    async fn output_deltas(&mut self,events:UniqueEvents){
         let mut deltas = Deltas::default();
-        for (i,predelta) in predeltas.into_iter().enumerate() {
-            let predelta = predelta.into();
-            let new_deltas = self.convert_predelta(predelta).await;
-            deltas.extend(new_deltas);
+        for (i,event) in events.into_iter().enumerate() {
+            let index = i as u16;
+            match event.kind {
+                DeltaKind::Create => {
+                    deltas.extend( self.handle_create(event, index).await);
+                }
+                DeltaKind::Update => {
+                    deltas.extend(self.handle_update(event, index));
+                }
+                DeltaKind::Delete => {
+                    deltas.extend(self.handle_delete(event, index));
+                }
+            }
+        }
+        
+        if !deltas.is_empty() {
+            self.output_tx.send(deltas).await;
         }
     }
+    
     
  
 }

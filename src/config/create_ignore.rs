@@ -1,7 +1,7 @@
 use crate::{config::{
     IGNORE_FILE_NAME,
     config::{Config, panic_required_file},
-}, path::{AbsPath, Local}};
+}, path::{AbsPath}};
 use anyhow::anyhow;
 use colored::*;
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -10,7 +10,7 @@ use tokio::{fs, io::AsyncBufReadExt};
 impl Config {
     pub async fn create_ignore(&self) -> anyhow::Result<GlobSet> {
         let path = self.local.root_path.child(IGNORE_FILE_NAME);
-        let file = fs::File::open(path.as_ref())
+        let file = fs::File::open(&path)
             .await
             .unwrap_or_else(panic_required_file(&path));
         let mut file = tokio::io::BufReader::new(file).lines();
@@ -24,7 +24,7 @@ impl Config {
     }
 }
 
-fn parse_err(line: &str, path: &AbsPath<Local>) -> impl FnOnce(globset::Error) -> anyhow::Error {
+fn parse_err(line: &str, path: &AbsPath) -> impl FnOnce(globset::Error) -> anyhow::Error {
     move |e: globset::Error| {
         anyhow!(
             "

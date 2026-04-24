@@ -15,14 +15,17 @@ mod bytes;
 pub mod info;
 mod id;
 mod name;
+mod name_buf;
 pub use id::FileId;
 pub use id::FileIdOrd;
+pub use name_buf::FileNameBuf;
 pub use name::FileName;
+
 mod child_id;
 #[derive(Debug, Copy, Pod, Zeroable, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub struct File {
-    name: FileName,
+    name: FileNameBuf,
     modified_at:Timestamp,
     parent_id: FileId,
     hash: i32,
@@ -48,12 +51,12 @@ impl File {
 
     pub fn calculate_hash(
         id: FileId,
-        modified_at: Timestamp,
+        timestamp: Timestamp,
         child_hashes: impl Iterator<Item = i32>,
     ) -> i32 {
         let mut state = FxHasher::default();
         id.hash(&mut state);
-        modified_at.hash(&mut state);
+        timestamp.hash(&mut state);
         for child_hash in child_hashes {
             child_hash.hash(&mut state);
         }
@@ -67,7 +70,7 @@ impl File {
         self.is_dir_u16 == 1
     }
     
-    pub fn file_name(&self) -> &FileName {
+    pub fn file_name(&self) -> &FileNameBuf {
         &self.name
     }
     
@@ -87,6 +90,13 @@ impl File {
         self.depth
     }
     
+    pub fn modify(self, id: FileId, timestamp: Timestamp,child_hashes: impl Iterator<Item = i32>) -> Self {
+        Self {
+            modified_at:timestamp,
+            hash: Self::calculate_hash(id, timestamp, child_hashes),
+            ..self
+        }
+    }
     
 }
 #[derive(Debug, Deref)]

@@ -1,15 +1,12 @@
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash};
 
 use bytemuck::{Pod, Zeroable};
 use derive_more::{Deref, From};
 use redb_derive::{Key, Value};
-use rustc_hash::FxHasher;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{ROOT_ID, ROOT_NAME},
-    db::tables::file::FileName,
-    path::RelPath,
+    db::tables::file::{FileName},
     state::file::name::FileName,
 };
 use redb::Value;
@@ -39,7 +36,7 @@ impl FileId {
    
 
     pub fn is_root(&self) -> bool {
-        *self == *ROOT_ID
+        *self == Self::ROOT
     }
 
     pub fn into_ord(self, depth: u16) -> FileIdOrd {
@@ -76,6 +73,12 @@ pub struct FileIdOrd {
 }
 
 impl FileIdOrd {
+    
+    pub const ROOT: Self = Self {
+        depth:0,
+        value: FileId::ROOT,
+    };
+    
     pub fn child(&self, name: &FileName) -> Self {
         let child_id = self.value.child(name);
         Self {
@@ -83,6 +86,11 @@ impl FileIdOrd {
             value: child_id,
         }
     }
-
- 
+    
+    pub fn extend<T: AsRef<FileName>>(self, mut components: impl Iterator<Item = T>) -> Self {
+        let Some(name) = components.next() else {
+            return self;
+        };
+        self.child(name.as_ref()).extend(components)
+    }
 }

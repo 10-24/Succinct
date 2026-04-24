@@ -1,4 +1,4 @@
-use redb::{MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, TableDefinition};
+use redb::{MultimapTable, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, Table, TableDefinition};
 use crate::db::tables::file::{File, FileId, FileIdOrd};
 
 
@@ -21,11 +21,13 @@ pub struct QueuedDeletion {
 
 pub const FILES: TableDefinition<FileId, &File> = TableDefinition::new("files");
 pub type FilesTable<'a> = ReadOnlyTable<FileId, &'a File>;
+pub type FilesTableMut<'a> = Table<'a,FileId, &'a File>;
 
 /// Stores only immediate children of a file.
 pub const CHILDREN: MultimapTableDefinition<FileId, FileId> =
     MultimapTableDefinition::new("children");
 pub type ChildrenTable = ReadOnlyMultimapTable<FileId, FileId>;
+pub type ChildrenTableMut<'a> = MultimapTable<'a, FileId, FileId>;
 
 pub const QUEUED_UPDATES: TableDefinition<FileIdOrd, ()> = TableDefinition::new("queued_updates");
 pub const QUEUED_DELETES: TableDefinition<FileIdOrd, ()> = TableDefinition::new("queued_deletes");

@@ -1,121 +1,139 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use derive_more::Deref;
 
 use crate::{
-    db::writer::DbWriter,
-    delta::{Delta, DeltaKind},
+    db::{
+        tables::{
+            CHILDREN, ChildrenTable, ChildrenTableMut, FILES, FilesTable, FilesTableMut,
+            file::{File, FileIdOrd},
+            timestamp::Timestamp,
+        },
+        writer::DbWriter,
+    },
+    delta::{Delta, DeltaData, DeltaKind},
     state::{file::File, file_id::FileIdOrd, state::State},
+    tables_mut,
 };
 
 impl State {
-    pub(crate) fn ensure_files_exist(
+    pub(crate) fn instantiate_files_and_complete_tree(
+        &self,
+        deltas: BTreeMap<FileIdOrd, Delta>,
+        now: Timestamp,
+        files_table: &mut FilesTableMut,
+        children_table: &mut ChildrenTableMut,
+    ) -> CompleteDeltas {
+        self.instantiate_new_files(&deltas, now, files_table, children_table);
+        self.complete_tree(deltas)
+    }
+
+    fn instantiate_new_files(
         &self,
         deltas: &BTreeMap<FileIdOrd, Delta>,
-        timestamp: DateTime<Utc>,
+        now: Timestamp,
+        files_table: &mut FilesTableMut,
+        children_table: &mut ChildrenTableMut,
     ) {
         for (id, delta) in deltas.iter() {
-            if DeltaKind::Create != delta.kind {
+            let DeltaData::Create(file_info) = delta.data else {
                 continue;
+            };
+            let file = File::empty(*id, file_info, now);
+            files_table.insert(**id, file).unwrap();
+            children_table.insert(file_info.parent_id, **id).unwrap();
+        }
+    }
+
+    pub(crate) fn complete_tree(
+        &self,
+        explicit_deltas: BTreeMap<FileIdOrd, Delta>,
+    ) -> CompleteDeltas {
+        let mut complete_deltas = CompleteDeltas(BTreeMap::new());
+
+        for (id, explicit_delta) in explicit_deltas.iter() {
+            let explicit_delta = DeltaValue::from(explicit_delta);
+            complete_deltas.try_insert(*id, explicit_delta);
+
+            for (id, implicit_delta) in self.get_implicit_deltas(*id, explicit_delta) {
+                complete_deltas.try_insert(id, implicit_delta);
             }
-            let file = File::empty(
-                delta.file.name.to_owned(),
-                id.depth,
-                timestamp,
-                delta.file.parent_id,
-            );
-            self.local_writer.ensure_file_exists(file);
         }
+
+        complete_deltas
     }
 
-    pub(crate) fn complete_tree(&self, explicit_deltas: BTreeMap<FileIdOrd, Delta>) -> FinalDeltas {
-        let implicit_deltas: Vec<Vec<(FileIdOrd, DeltaValue)>> = explicit_deltas
-            .iter()
-            .map(|(id, delta)| self.get_implicit_deltas(*id, delta))
-            .collect();
-
-        let explicit_deltas = explicit_deltas
+    fn get_implicit_deltas(
+        &self,
+        id: FileIdOrd,
+        delta: DeltaValue,
+    ) -> Vec<(FileIdOrd, DeltaValue)> {
+        let ancestors = self
+            .local_db
+            .get_file_ancestors(*id)
             .into_iter()
-            .map(|(id, delta)| (id, DeltaValue::from(&delta)));
-
-        let mut deltas = BTreeMap::new();
-
-        for delta in explicit_deltas.chain(implicit_deltas.into_iter().flatten()) {
-            try_insert(&mut deltas, delta);
-        }
-
-        deltas
-    }
-
-    fn get_implicit_deltas(&self, id: FileIdOrd, delta: &Delta) -> Vec<(FileIdOrd, DeltaValue)> {
-        let Some(ancestors) = self.local_reader.get_file_ancestors(*id) else {
-            return Vec::new();
+            .map(into_implicit_update(delta.index));
+        if DeltaKind::Delete != delta.kind {
+            return ancestors.collect();
         };
 
-        let updated_ancestors = ancestors.into_iter().map(implicit_update(delta.index));
-
-        if delta.kind != DeltaKind::Delete {
-            return updated_ancestors.collect();
-        }
-
         let deleted_descendants = self
-            .local_reader
-            .get_file_descendants(*id)
+            .local_db
+            .get_file_descendants(id)
             .into_iter()
-            .map(implicit_delete(delta.index));
-
-        updated_ancestors.chain(deleted_descendants).collect()
+            .map(into_implicit_delete(delta.index));
+        ancestors.chain(deleted_descendants).collect()
     }
 }
 
-fn implicit_update(ord: u16) -> impl Fn(FileIdOrd) -> (FileIdOrd, DeltaValue) {
+fn into_implicit_update(index: u16) -> impl Fn(FileIdOrd) -> (FileIdOrd, DeltaValue) {
     move |ancestor_id| {
-        (
-            ancestor_id,
-            DeltaValue {
-                ord,
-                kind: DeltaKind::Update,
-            },
-        )
+        let delta = DeltaValue {
+            index,
+            kind: DeltaKind::Update,
+        };
+        (ancestor_id, delta)
     }
 }
 
-fn implicit_delete(ord: u16) -> impl Fn(FileIdOrd) -> (FileIdOrd, DeltaValue) {
+fn into_implicit_delete(index: u16) -> impl Fn(FileIdOrd) -> (FileIdOrd, DeltaValue) {
     move |ancestor_id| {
-        (
-            ancestor_id,
-            DeltaValue {
-                ord,
-                kind: DeltaKind::Delete,
-            },
-        )
+        let delta = DeltaValue {
+            index,
+            kind: DeltaKind::Delete,
+        };
+        (ancestor_id, delta)
     }
 }
 
-fn try_insert(deltas: &mut FinalDeltas, delta: DeltaKV) {
-    let prev_entry = deltas.entry(delta.0);
-    prev_entry
-        .and_modify(|prev_entry| {
-            if delta.1.ord > prev_entry.ord {
-                *prev_entry = delta.1;
-            }
-        })
-        .or_insert(delta.1);
+/// Proof: All new files have been initialized & all implicit updates have been included.
+#[derive(Debug, Deref)]
+pub struct CompleteDeltas(BTreeMap<FileIdOrd, DeltaValue>);
+
+impl CompleteDeltas {
+    fn try_insert(&mut self, id: FileIdOrd, delta: DeltaValue) {
+        self.0
+            .entry(id)
+            .and_modify(|prev_entry| {
+                if delta.index > prev_entry.index {
+                    *prev_entry = delta;
+                }
+            })
+            .or_insert(delta);
+    }
 }
-
-pub type FinalDeltas = BTreeMap<FileIdOrd, DeltaValue>;
-
 #[derive(Debug, Clone, Copy)]
 pub struct DeltaValue {
     pub kind: DeltaKind,
-    pub ord: u16,
+    pub index: u16,
 }
 
 impl DeltaValue {
     pub fn from(delta: &Delta) -> Self {
         Self {
-            kind: delta.kind,
-            ord: delta.index,
+            kind: delta.data.kind(),
+            index: delta.index,
         }
     }
 }

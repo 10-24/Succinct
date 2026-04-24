@@ -1,11 +1,7 @@
-use std::sync::Arc;
-
 use chrono::{DateTime, Utc};
 use redb::{ReadableTable, WriteTransaction};
-use tokio::sync::MutexGuard;
-
 use crate::{
-    db::tables::{CHILDREN, FILES, QUEUED_DELETES, QUEUED_UPDATES, file::FileIdOrd, macros::OpenWriteTable},
+    db::tables::{CHILDREN, FILES, QUEUED_DELETES, QUEUED_UPDATES, file::FileIdOrd},
     state::{
         file::{File, FileKV},
         file_id::FileId,
@@ -29,7 +25,7 @@ impl DbWriter {
     /// Removes a file from the files table and the children index.
     /// Does nothing if the file doesn't exist.
     pub fn delete_file(&self, id: FileId) {
-        let (files,children) = tables_mut!(self,FILES,CHILDREN);
+        let (mut files,mut children) = tables_mut!(self,FILES,CHILDREN);
 
         if let Some(bytes) = files.remove(&id.0).unwrap() {
             let file: File = bincode::deserialize(&bytes.value()).unwrap();
@@ -39,7 +35,7 @@ impl DbWriter {
 
     /// Removes the file from the delete queue and adds it to the update queue.
     pub fn enqueue_update(&self, id: FileIdOrd) {
-        let (queued_updates,queued_deletes) = tables_mut!(self,QUEUED_UPDATES,QUEUED_DELETES);
+        let (mut queued_updates,mut queued_deletes) = tables_mut!(self,QUEUED_UPDATES,QUEUED_DELETES);
 
         queued_deletes.remove(id).unwrap();
         queued_updates.insert(id,()).unwrap();
@@ -47,19 +43,19 @@ impl DbWriter {
 
     /// Removes the file from the update queue and adds it to the delete queue.
     pub fn enqueue_delete(&self, id: FileIdOrd) {
-        let (queued_updates,queued_deletes) = tables_mut!(self,QUEUED_UPDATES,QUEUED_DELETES);
+        let (mut queued_updates,mut queued_deletes) = tables_mut!(self,QUEUED_UPDATES,QUEUED_DELETES);
 
         queued_updates.remove(id).unwrap();
         queued_deletes.insert(id,()).unwrap();
     }
 
     pub fn dequeue_update(&self, id: FileId) {
-        let queued_updates = tables_mut!(self,QUEUED_UPDATES);
+        let mut queued_updates = tables_mut!(self,QUEUED_UPDATES);
         queued_updates.remove(&id.0).unwrap();
     }
 
     pub fn dequeue_delete(&self, id: FileId) {
-        let queued_deletes = tables_mut!(self,QUEUED_DELETES);
+        let mut queued_deletes = tables_mut!(self,QUEUED_DELETES);
         queued_deletes.remove(&id.0).unwrap();
     }
 

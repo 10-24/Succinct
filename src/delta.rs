@@ -9,15 +9,45 @@ pub type Deltas = BTreeMap<FileIdOrd,Delta>;
 
 #[derive(Debug,Clone, Copy)]
 pub struct Delta {
-    pub kind: DeltaData,
+    pub data: DeltaData,
     pub index: u16,
 }
 
+impl Delta {
+    pub fn new_create(index:u16,info:FileInfo,) -> Self {
+        Delta {
+            index,
+            data: DeltaData::Create(info)
+        }
+    }
+    pub fn new_update(index:u16) -> Self {
+        Delta {
+            index,
+            data: DeltaData::Update
+        }
+    }
+    pub fn new_delete(index:u16) -> Self {
+        Delta {
+            index,
+            data: DeltaData::Delete
+        }
+    }
+}
 #[derive(Debug,Clone, Copy)]
 pub enum DeltaData {
     Create(FileInfo),
     Update,
     Delete,
+}
+
+impl DeltaData {
+    pub fn kind(&self) -> DeltaKind {
+        match self {
+            DeltaData::Create(_) => DeltaKind::Create,
+            DeltaData::Update => DeltaKind::Update,
+            DeltaData::Delete => DeltaKind::Delete,
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Copy, Clone)]
@@ -47,6 +77,7 @@ impl DeltaKind {
             _ => unreachable!()
         }
     }
+ 
 }
 
 fn has_any(event: &EventMask, target: &WatchMask) -> bool {

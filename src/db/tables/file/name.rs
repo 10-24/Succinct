@@ -1,73 +1,48 @@
-use std::{hash::Hash, path::Path};
+use std::ffi::{OsStr};
 
-use bytemuck::{Pod, Zeroable};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use bytemuck::{TransparentWrapper};
+use crate::{db::tables::file::name_buf::FileNameBuf};
 
-use crate::path::{AbsPath, Local};
 
-#[derive(Debug, Clone, Copy, Pod, Zeroable, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(C)]
-pub struct FileName {
-    length: u8,
-    bytes: [u8; FileName::MAX_LEN],
-}
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct FileName(str);
+unsafe impl TransparentWrapper<str> for FileName {}
 
 impl FileName {
-    pub const MAX_LEN: usize = 39;
-
-    pub fn from(s: impl AsRef<str>) -> Option<Self> {
-        if !Self::is_valid(s.as_ref()) {
-            return None;
-        }
-        Some(Self::from_unchecked(s))
+    
+    pub fn from(s: &str) -> Option<&Self> {
+        FileName::is_valid(s).then(|| FileName::from_unchecked(s))
     }
-
-    pub fn from_abs_path(path: AbsPath<Local>) -> Option<Self> {
-        Self::from(path.file_name())
+    
+    pub fn from_os_str(s: &OsStr) -> Option<&Self> {
+        Self::from(s.to_str().unwrap())
     }
-
-    pub fn from_unchecked(s: impl AsRef<str>) -> Self {
-        let s = s.as_ref();
-        let mut bytes = [0u8; Self::MAX_LEN];
-        bytes[..s.len()].copy_from_slice(s.as_bytes());
-        Self {
-            length: s.len() as u8,
-            bytes,
-        }
+    
+    pub(super) fn from_unchecked(s: &str) -> &Self {
+        FileName::wrap_ref(s)
     }
-
+    
     pub fn as_str(&self) -> &str {
-        unsafe { std::str::from_utf8_unchecked(&self.bytes[..self.len()]) }
+        FileName::peel_ref(self)
     }
-
-    pub const fn constant(s: &'static str) -> Self {
-        assert!(Self::is_valid(s), "Invalid file name");
-
-        let mut bytes = [0u8; Self::MAX_LEN];
-        let s = s.as_bytes();
-        let mut i = 0;
-        while i < s.len() {
-            bytes[i] = s[i];
-            i += 1;
-        }
-        Self {
-            length: s.len() as u8,
-            bytes,
-        }
-    }
-
+    
     pub const fn is_valid(s: &str) -> bool {
-        (0 < s.len()) && (s.len() <= Self::MAX_LEN)
+        (0 < s.len()) && (s.len() <= FileNameBuf::MAX_LEN)
+    }
+    
+    pub fn as_bytes(&self) -> &[u8] {
+        self.as_str().as_bytes()
     }
     
     pub fn len(&self) -> usize {
-        self.length as usize
+        self.as_str().len()
     }
 }
 
 impl AsRef<FileName> for FileName {
     fn as_ref(&self) -> &FileName {
-        &self
+        self
     }
 }
 
@@ -77,33 +52,16 @@ impl AsRef<str> for FileName {
     }
 }
 
-impl Hash for FileName {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.as_str().hash(state);
+
+impl ToOwned for FileName {
+    type Owned = FileNameBuf;
+    fn to_owned(&self) -> Self::Owned {
+        FileNameBuf::from_unchecked(self.as_str())
     }
 }
 
-impl Serialize for FileName {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for FileName {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        Self::from(&s).ok_or_else(|| {
-            serde::de::Error::custom(format!(
-                "file name too long: {} bytes (max {})",
-                s.len(),
-                Self::MAX_LEN
-            ))
-        })
-    }
-}
-
-impl std::fmt::Display for FileName {
+impl std::fmt::Display for &FileName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
+        self.as_str().fmt(f)
     }
 }

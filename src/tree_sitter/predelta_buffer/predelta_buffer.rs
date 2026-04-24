@@ -15,7 +15,7 @@ pub struct PredeltaBuffer {
 }
 
 impl PredeltaBuffer {
-    pub fn new(debounce_duration: Duration) -> (Self, Receiver<UniquePredeltas>) {
+    pub fn new(debounce_duration: Duration) -> (Self, Receiver<UniqueEvents>) {
         let (output_tx, rx) = mpsc::channel(2);
         let (debounced_tx, debounced_rx) = DebouncedTx::new_graceful(debounce_duration);
         let buffer = Arc::from(Mutex::default());
@@ -34,7 +34,7 @@ impl PredeltaBuffer {
 
     async fn emitter(
         buffer: Arc<Mutex<Vec<EventKV>>>,
-        output_tx: mpsc::Sender<UniquePredeltas>,
+        output_tx: mpsc::Sender<UniqueEvents>,
         mut debounced_rx: impl Stream<Item = ()> + Unpin,
     ) {
         
@@ -46,7 +46,7 @@ impl PredeltaBuffer {
                 let buffer_len = buffer.len(); 
                 mem::replace(&mut *buffer,Vec::with_capacity(buffer_len*3/2))
             };
-            let unique = UniquePredeltas::new(prev_buffer);
+            let unique = UniqueEvents::new(prev_buffer);
             output_tx.send(unique).await;
         }
     }
@@ -58,9 +58,9 @@ impl PredeltaBuffer {
 
 /// Use `into_iter` to iterate in proper order of creation
 #[derive(Debug)]
-pub struct UniquePredeltas(Vec<EventKV>);
+pub struct UniqueEvents(Vec<EventKV>);
 
-impl UniquePredeltas {
+impl UniqueEvents {
     fn new(buffer: Vec<EventKV>) -> Self {
         let mut prev = hashset(buffer.len());
         let mut unique = Vec::with_capacity(buffer.len());
@@ -74,7 +74,7 @@ impl UniquePredeltas {
     }
 }
 
-impl IntoIterator for UniquePredeltas {
+impl IntoIterator for UniqueEvents {
     type Item = EventKV;
     type IntoIter = Rev<IntoIter<Self::Item>>;
 

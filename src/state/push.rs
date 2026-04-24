@@ -8,7 +8,7 @@ use crate::{
 
 impl State {
     pub async fn clear_queue(&mut self, remote_writer: &mut RemoteWriter) -> anyhow::Result<()> {
-        let deleted_files = self.local_reader.get_delete_queue();
+        let deleted_files = self.local_db.get_delete_queue();
         let delete_futs = deleted_files
             .iter()
             .map(|f| self.delete_from_drive(&f.file_id));
@@ -20,7 +20,7 @@ impl State {
             })?;
         }
 
-        let updated_files = self.local_reader.get_update_queue();
+        let updated_files = self.local_db.get_update_queue();
         let save_futs = updated_files.iter().map(|f| self.save_file_to_drive(f));
         try_join_all(save_futs).await?;
         for updated_file in updated_files {
@@ -34,13 +34,13 @@ impl State {
     }
 
     async fn delete_from_drive(&self, id: &FileId) -> anyhow::Result<()> {
-        let path = self.local_reader.get_file_path(*id).unwrap();
+        let path = self.local_db.get_file_path(*id).unwrap();
         self.remote_drive.delete(&path).await?;
         Ok(())
     }
 
     async fn save_file_to_drive(&self, updated_file: &File) -> anyhow::Result<()> {
-        let path = self.local_reader.get_file_path(updated_file.id).unwrap();
+        let path = self.local_db.get_file_path(updated_file.id).unwrap();
         let local_path = self.local_root.join(&path);
 
         let metadata = fs::metadata(local_path.as_ref()).await?;

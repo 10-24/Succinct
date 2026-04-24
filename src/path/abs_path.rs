@@ -1,29 +1,19 @@
-use std::{ops::Deref, path::{Path}};
-
-use ignore::gitignore::Gitignore;
+use std::{path::Path, sync::Arc};
 use serde::{Deserialize, Serialize};
 
-use crate::{config::ROOT_NAME, path::RelPath};
+use crate::{config::ROOT_NAME, db::tables::file::FileName, path::RelPath};
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Local;
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Remote;
-pub trait PathKind: Clone {}
-impl PathKind for Local {}
-impl PathKind for Remote {}
+
 
 /// Never ends with a '/'
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AbsPath<K: PathKind> {
-    inner: Box<str>,
-    _marker: std::marker::PhantomData<K>,
+#[derive(Debug, Clone, Default,Serialize,Deserialize)]
+pub struct AbsPath {
+    inner: Arc<str>,
 }
-impl<K: PathKind> AbsPath<K> {
+impl AbsPath {
     pub fn new(path: impl AsRef<str>) -> Self {
         Self {
             inner: path.as_ref().trim_end_matches('/').into(),
-            _marker: std::marker::PhantomData,
         }
     }
 
@@ -38,13 +28,13 @@ impl<K: PathKind> AbsPath<K> {
         Self::new(new_path)
     }
 
-    pub fn file_name(&self) -> &str {
+    pub fn file_name(&self) -> Option<&FileName> {
         for (i,c) in self.inner.char_indices().rev() {
             if c == '/' {
-                return &self.inner[i + 1..];
+                return FileName::from(&self.inner[i + 1..]);
             }
         }
-        &self.inner
+        FileName::from(&self.inner)
     }
     
     
@@ -61,34 +51,36 @@ impl<K: PathKind> AbsPath<K> {
     pub fn len(&self) -> usize {
         self.inner.len()
     }
-    
-    pub fn starts_with(&self, other: &AbsPath<K>) -> bool {
-        self.as_str().starts_with(other.as_str())
+
+    pub fn as_rel(&self,root:&Self) -> Option<RelPath> {
+        let s = self.as_str().strip_prefix(root.as_str())?;
+        Some(RelPath::from(s))
     }
+  
 }
 
-impl<K: PathKind> AsRef<str> for AbsPath<K> {
+impl AsRef<str> for AbsPath {
     fn as_ref(&self) -> &str {
         &self.inner
     }
 }
 
-impl<K: PathKind> AsRef<Path> for AbsPath<K> {
+impl AsRef<Path> for AbsPath {
     fn as_ref(&self) -> &Path {
         Path::new(self.as_str())
     }
 }
 
 
-impl From<&Path> for AbsPath<Local> {
+impl From<&Path> for AbsPath {
     fn from(path: &Path) -> Self {
         debug_assert!(path.is_absolute());
         AbsPath::new(path.to_string_lossy())
     }
 }
 
-impl<T:PathKind> std::fmt::Display for AbsPath<T> {
+impl std::fmt::Display for AbsPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_ref())
+        self.as_str().fmt(f)
     }
 }

@@ -1,7 +1,6 @@
 
 use redb::{
-    Key, MultimapTableDefinition, ReadOnlyMultimapTable, 
-    ReadOnlyTable, ReadTransaction, Table, TableDefinition, Value, WriteTransaction
+    Key, MultimapTable, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, ReadTransaction, Table, TableDefinition, Value, WriteTransaction
 };
 
 // --- TRAITS (Keep these public so the macro can see them) ---
@@ -36,6 +35,12 @@ impl<'a, 'b, K: Key + 'static, V: Value + 'static> OpenWriteTable<'a> for TableD
         txn.open_table(self).unwrap()
     }
 }
+impl<'a, K: Key + 'static, V: Key + Value + 'static> OpenWriteTable<'a> for MultimapTableDefinition<'a, K, V> {
+    type Out = MultimapTable<'a, K, V>;
+    fn open_table_mut(self, txn: &'a WriteTransaction) -> Self::Out {
+        txn.open_multimap_table(self).unwrap()
+    }
+}
 
 // --- MACROS ---
 
@@ -60,7 +65,7 @@ macro_rules! tables {
 #[macro_export]
 macro_rules! tables_mut {
     ($writer:expr, $($table:expr),+) => {{
-        use $crate::db::tables::macros::OpenWriteTable;
+        // use $crate::db::tables::macros::OpenWriteTable;
         
         let writer: &$crate::db::writer::DbWriter = $writer;
         (

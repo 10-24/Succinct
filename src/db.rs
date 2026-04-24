@@ -9,7 +9,7 @@ use tables::{CHILDREN, ChildrenTable, FILES, FilesTable, QUEUED_DELETES, QueuedD
 use writer::DbWriter;
 
 use crate::{
-     db::tables::macros::OpenReadTable, hashset, path::RelPath, state::file::{
+     db::tables::{file::FileIdOrd, macros::OpenReadTable}, hashset, path::RelPath, state::file::{
         File,
         bytes::FileBytes,
         id::{FileId, FileIdOrd},
@@ -38,7 +38,7 @@ impl Db {
         db
     }
 
-    pub async fn begin_write(&self) -> DbWriter {
+    pub fn begin_write(&self) -> DbWriter {
         let txn = self.conn.begin_write().unwrap();
         DbWriter { txn }
     }
@@ -133,5 +133,17 @@ impl Db {
         let mut ancestors = Vec::with_capacity(8);
         add_ancestors(file_id, &files, &mut ancestors);
         ancestors.into_iter().rev()
+    }
+    
+    pub fn contains_file(&self, file_id: FileId) -> bool {
+        let entry = tables!(self,FILES).get(file_id).unwrap();
+        entry.is_some()
+    }
+    
+    pub fn is_dir(&self,file_id: FileId) -> Option<bool> {
+        let files = tables!(self,FILES);
+        
+        let file = files.get(&file_id).unwrap()?;
+        Some(file.value().is_dir)
     }
 }

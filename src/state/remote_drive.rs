@@ -3,7 +3,7 @@ use opendal::{Buffer, Operator};
 use tokio::{fs, io};
 use tokio_util::{bytes::Bytes, io::ReaderStream};
 
-use crate::path::{AbsPath, Local, RelPath, Remote};
+use crate::path::{AbsPath, RelPath};
 
 pub struct RemoteDrive {
     pub drive: Operator,
@@ -23,7 +23,7 @@ impl RemoteDrive {
 
     pub(crate) async fn save_file(
         &self,
-        local_path: &AbsPath<Local>,
+        local_path: &AbsPath,
         path: &RelPath,
     ) -> anyhow::Result<()> {
         let remote_path = self.into_remote_path(path);

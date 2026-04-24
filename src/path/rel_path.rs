@@ -1,40 +1,28 @@
 use std::rc::Rc;
+use bytemuck::TransparentWrapper;
 
 use derive_more::Deref;
 
-use crate::{config::ROOT_NAME, state::file::name::FileName};
+use crate::{config::ROOT_NAME, db::tables::file::{FileName}, state::file::name::FileName};
 
 #[derive(Debug, Clone, Deref)]
 pub struct RelPath(Rc<str>);
 
 impl RelPath {
-    pub fn new(p: impl Into<Rc<str>>) -> Option<Self> {
-        let path_str = p.into();
-        Self::is_valid(&path_str).then_some(Self(path_str))
+    pub fn from(p: impl AsRef<str>) -> Self {
+        let path_str = p.as_ref().trim_matches('/');
+        Self(Rc::from(path_str))
     }
 
-    pub fn is_valid(path_str: &str) -> bool {
-        path_str.starts_with(ROOT_NAME.as_str()) && !path_str.ends_with('/')
+    pub fn depth(&self) -> u16 {
+        self.as_ref().chars().filter(|c| *c == '/').count() as u16
     }
 
-    pub fn depth(&self) -> usize {
-        self.as_ref().chars().filter(|c| *c == '/').count()
-    }
-
-    pub fn is_root(&self) -> bool {
-        ROOT_NAME.as_str() == self.0.as_ref()
-    }
-
-    pub fn child(&self, name: &str) -> Self {
+    pub fn child(&self, name: &FileName) -> Self {
         let path_str = format!("{self}/{name}");
-        debug_assert!(Self::is_valid(&path_str), "invalid path: {path_str}");
-        Self(path_str.into())
+        Self::from(path_str)
     }
 
-    pub fn root() -> Self {
-        Self(ROOT_NAME.as_str().into())
-    }
-    
     pub fn from_components<T: AsRef<FileName>>(components: impl Iterator<Item = T>) -> Option<Self> {
         let mut path = String::with_capacity(72);
         for component in components {
@@ -43,7 +31,11 @@ impl RelPath {
             }
             path.push_str(component.as_ref().as_str());
         }
-        Self::new(path)
+        Some(Self::from(path))
+    }
+    
+    pub fn components(&self) -> impl DoubleEndedIterator<Item=&str> {
+        self.split('/')
     }
     
     pub fn as_str(&self) -> &str {
@@ -56,3 +48,6 @@ impl std::fmt::Display for RelPath {
         write!(f, "{}", self.as_ref())
     }
 }
+
+
+
