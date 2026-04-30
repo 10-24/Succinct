@@ -1,5 +1,6 @@
 use std::{
-    hash::{Hash, Hasher}, iter
+    hash::{Hash, Hasher},
+    iter,
 };
 
 use crate::{
@@ -12,21 +13,21 @@ use derive_more::Deref;
 use rustc_hash::FxHasher;
 use serde::{Deserialize, Serialize};
 mod bytes;
-pub mod info;
 mod id;
+pub mod info;
 mod name;
 mod name_buf;
 pub use id::FileId;
 pub use id::FileIdOrd;
-pub use name_buf::FileNameBuf;
 pub use name::FileName;
+pub use name_buf::FileNameBuf;
 
 mod child_id;
 #[derive(Debug, Copy, Pod, Zeroable, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub struct File {
     name: FileNameBuf,
-    modified_at:Timestamp,
+    modified_at: Timestamp,
     parent_id: FileId,
     hash: i32,
     depth: u16,
@@ -36,8 +37,8 @@ pub struct File {
 impl File {
     pub const SIZE: usize = std::mem::size_of::<File>();
 
-    pub fn empty(id:FileIdOrd, info:FileInfo,now:Timestamp) -> Self {
-        let hash = Self::calculate_hash(*id, now,iter::empty());
+    pub fn empty(id: FileIdOrd, info: FileInfo, now: Timestamp) -> Self {
+        let hash = Self::calculate_hash(*id, now, iter::empty());
         Self {
             name: info.name,
             parent_id: info.parent_id,
@@ -47,7 +48,6 @@ impl File {
             is_dir_u16: u16::from(info.is_dir),
         }
     }
-   
 
     pub fn calculate_hash(
         id: FileId,
@@ -65,39 +65,43 @@ impl File {
         let hash_32 = hash_64[..4].try_into().unwrap();
         i32::from_ne_bytes(hash_32)
     }
-    
+
     pub fn is_dir(&self) -> bool {
         self.is_dir_u16 == 1
     }
-    
-    pub fn file_name(&self) -> &FileNameBuf {
+
+    pub fn name(&self) -> &FileNameBuf {
         &self.name
     }
-    
+
     pub fn parent_id(&self) -> FileId {
         self.parent_id
     }
-    
+
     pub fn modified_at(&self) -> Timestamp {
         self.modified_at
     }
-    
+
     pub fn hash(&self) -> i32 {
         self.hash
     }
-    
+
     pub fn depth(&self) -> u16 {
         self.depth
     }
-    
-    pub fn modify(self, id: FileId, timestamp: Timestamp,child_hashes: impl Iterator<Item = i32>) -> Self {
+
+    pub fn modify(
+        self,
+        id: FileId,
+        timestamp: Timestamp,
+        child_hashes: impl Iterator<Item = i32>,
+    ) -> Self {
         Self {
-            modified_at:timestamp,
+            modified_at: timestamp,
             hash: Self::calculate_hash(id, timestamp, child_hashes),
             ..self
         }
     }
-    
 }
 #[derive(Debug, Deref)]
 pub struct FileKV {

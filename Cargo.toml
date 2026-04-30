@@ -10,10 +10,9 @@ chrono = { version = "0.4.44", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["deref", "from", "into"] }
 futures = "0.3.32"
 inotify = "0.10"
-opendal = { version = "0.55.0", features = ["services-gdrive"] }
+opendal = { version = "0.55.0", features = ["services-gdrive","services-compfs"] }
 rustc-hash = "2.1.1"
 redb = "4"
-tokio = { version = "1", features = ["full"] }
 dirs = "6.0.0"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 confy = "2.0.0"
@@ -25,7 +24,9 @@ arrayvec = "0.7.6"
 smallvec = "1.15.1"
 globset = "0.4.18"
 async-walkdir = "2.1.0"
-compio = { version = "0.18.0", features = ["macros", "fs"] }
+compio = { version = "0.18.0", features = ["macros", "fs", "io-compat"] }
+nohash = "0.2.0"
+velcro = "0.5.4"
 
 # pulp = "0.22.2"
 # redb-derive = "0.1.0"

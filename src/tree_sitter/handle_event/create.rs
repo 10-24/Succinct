@@ -36,7 +36,7 @@ impl TreeSitter {
 
     fn try_create_child(&mut self, event: &EventKV) -> Option<(FileIdOrd, FileInfo, AbsPath)> {
         let parent_id = *self.descriptors.get(&event.descriptor).unwrap();
-        let parent_rel_path = self.db.get_file_path(parent_id);
+        let parent_rel_path = self.db.get_file_path(parent_id); // Todo: add path caching
         let parent_id = parent_id.into_ord(parent_rel_path.depth());
         let name = FileName::from_os_str(&event.name.unwrap())?.to_owned();
         let path = parent_rel_path.child(&name);

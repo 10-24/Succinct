@@ -65,3 +65,9 @@ impl std::fmt::Display for &FileName {
         self.as_str().fmt(f)
     }
 }
+
+impl Into<String> for &FileName {
+    fn into(self) -> String {
+        self.as_str().to_string()
+    }
+}

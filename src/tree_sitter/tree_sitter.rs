@@ -3,18 +3,19 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use globset::GlobSet;
 use inotify::{Inotify, Watches};
+use nohash::IntMap;
 use redb::{ReadableTable, ReadableTableMetadata};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tokio::sync::{mpsc};
 
 use crate::{
-    db::{Db, tables::{FILES, file::{FileIdOrd, FileName, info::FileInfo}}}, delta::{Delta, DeltaData, DeltaReceiver, DeltaSender}, hashset, path::AbsPath, tables, tree_sitter::{event::EventKV, subscribe::WalkNode}
+    db::{Db, tables::{FILES, file::{FileIdOrd, FileName, info::FileInfo}}}, delta::{Delta, DeltaData, DeltaReceiver, DeltaSender}, hashset, path::{AbsPath, RelPath}, tables, tree_sitter::{event::EventKV, subscribe::WalkNode}
 };
 use crate::db::tables::file::FileId;
 
 pub struct TreeSitter {
     pub(crate) inotify_watch_list: Arc<std::sync::Mutex<Watches>>,
-    pub(crate) descriptors: FxHashMap<i32, FileIdOrd>,
+    pub(crate) descriptors: IntMap<i32, FileIdOrd>,
     pub(crate) root: AbsPath,
     pub(crate) ignore:Arc<GlobSet>,
     pub(crate) db: Db,

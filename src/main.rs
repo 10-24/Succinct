@@ -1,5 +1,7 @@
+#![feature(str_as_str)]
 #![feature(portable_simd)]
 #[cfg(target_os = "linux")]
+
 use std::hash::{Hash, Hasher};
 use rustc_hash::FxHashSet;
 
@@ -12,7 +14,8 @@ use crate::{
     state::state::State,
     tree_sitter::tree_sitter::TreeSitter,
 };
-
+#[macro_use]
+mod macros;
 mod delta;
 mod path;
 mod state;

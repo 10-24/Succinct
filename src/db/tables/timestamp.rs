@@ -1,7 +1,9 @@
 use bytemuck::{Pod, Zeroable};
 use chrono::{DateTime, Utc};
+use redb::{Value};
+use redb_derive::{Key, Value};
 use serde::{Deserialize, Serialize};
-#[derive(Clone, Copy,PartialEq, Eq,PartialOrd, Ord,Zeroable,Deserialize,Serialize,Pod,Default,Hash)]
+#[derive(Clone, Copy,PartialEq, Eq,PartialOrd, Ord,Zeroable,Deserialize,Serialize,Pod,Default,Hash,Key,Value)]
 #[repr(C)]
 pub struct Timestamp (i64);
 impl Timestamp {

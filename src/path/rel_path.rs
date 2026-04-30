@@ -23,7 +23,7 @@ impl RelPath {
         Self::from(path_str)
     }
 
-    pub fn from_components<T: AsRef<FileName>>(components: impl Iterator<Item = T>) -> Option<Self> {
+    pub fn from_components<T: AsRef<FileName>>(components: impl Iterator<Item = T>) -> Self {
         let mut path = String::with_capacity(72);
         for component in components {
             if !path.is_empty() {
@@ -31,7 +31,7 @@ impl RelPath {
             }
             path.push_str(component.as_ref().as_str());
         }
-        Some(Self::from(path))
+Self::from(path)
     }
     
     pub fn components(&self) -> impl DoubleEndedIterator<Item=&str> {

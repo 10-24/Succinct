@@ -1,58 +1,76 @@
 use futures::future::try_join_all;
-use tokio::{fs, try_join};
+use redb::{ReadableTable, ReadableTableMetadata};
 
-use crate::{
-    database::remote_writer::RemoteWriter,
-    state::{file::File, file_id::FileId, state::State},
-};
+use crate::{db::{Db, tables::{CHILDREN, ChildrenTableMut, FILES, FilesTable, FilesTableMut, QUEUED_UPDATES, QueuedDeletesTableMut, QueuedUpdatesTable, QueuedUpdatesTableMut, file::{File, FileId}, queued_deltas::QueuedDelete}}, delta::DeltaKind, state::{remote_drive::save::{DriveErr, UpdatePath}, state::State}, tables, tables_mut};
 
 impl State {
-    pub async fn clear_queue(&mut self, remote_writer: &mut RemoteWriter) -> anyhow::Result<()> {
-        let deleted_files = self.local_db.get_delete_queue();
-        let delete_futs = deleted_files
-            .iter()
-            .map(|f| self.delete_from_drive(&f.file_id));
-        try_join_all(delete_futs).await?;
-        for delete in deleted_files {
-            try_join!(remote_writer.delete(delete.file_id), async {
-                self.local_writer.dequeue_update(delete.file_id);
-                Ok(())
-            })?;
+    pub async fn push_remote(&self) {
+        let local_writer = self.local_db.begin_write();
+        let queued_deltas = tables_mut!(&local_writer,QUEUED_UPDATES);
+        let local_files = tables!(self.local_db,FILES);
+        let remote_writer = self.remote_db.begin_write();
+        let (remote_files,remote_children) = tables_mut!(&remote_writer, FILES, CHILDREN);
+        let tables = PushTables {
+            local_files,
+            remote_files,
+            remote_children,
+        };
+        
+        if tables.queued_updates.len().unwrap() > 0 {
+            self.sync_updates(&tables);
+            self.push_updates(&mut tables);
+        } 
+        if tables.queued_deletes.len().unwrap() > 0 {
+            
+            self.push_deletes(&mut tables);
         }
+        remote_writer.commit();
+        local_writer.commit();
+    }
 
-        let updated_files = self.local_db.get_update_queue();
-        let save_futs = updated_files.iter().map(|f| self.save_file_to_drive(f));
-        try_join_all(save_futs).await?;
-        for updated_file in updated_files {
-            try_join!(remote_writer.insert_file(&updated_file), async {
-                self.local_writer.dequeue_update(updated_file.id);
-                Ok(())
-            })?;
-        }
-
+    async fn sync_updates<'a>(&self, tables: &PushTables<'a>) -> Result<(),DriveErr>  {
+        let updated_paths = tables.queued_updates.iter().unwrap().map(|entry| {
+            let id = entry.unwrap().0.value();
+            let rel = Db::get_file_path(id, &tables.local_files);
+            let abs = self.local_root.join(&rel);
+            UpdatePath { id, rel, abs }
+        });
+        self.drive.upload_all(updated_paths).await?;
         Ok(())
     }
-
-    async fn delete_from_drive(&self, id: &FileId) -> anyhow::Result<()> {
-        let path = self.local_db.get_file_path(*id).unwrap();
-        self.remote_drive.delete(&path).await?;
-        Ok(())
+    
+    async fn push_updates<'a>(&self, tables: &mut PushTables<'a>) {
+        for entry in tables.queued_updates.iter().unwrap() {
+            let id = entry.unwrap().0.value();
+            let file:&File = tables.local_files.get(id).unwrap().unwrap().value();
+            if file.is_dir() {
+                continue;
+            }
+            tables.remote_files.insert(id, file).unwrap();
+            tables.remote_children.insert(file.parent_id(), id).unwrap();
+        }
+        tables.queued_updates.retain(|_,_| false).unwrap(); // clear all
+    }
+    
+    async fn sync_deletes<'a>(&self,tables: &PushTables<'a>) -> Result<(),DriveErr> {
+        let deleted_files = tables.queued_deletes.iter().unwrap().map(|e| e.unwrap().0.value());
+        try_join_all(deleted_files.map(async |id|{
+            let rel_path = Db::get_file_path(id, &tables.local_files);
+            self.drive.delete(&rel_path).await
+        }))
+   
     }
 
-    async fn save_file_to_drive(&self, updated_file: &File) -> anyhow::Result<()> {
-        let path = self.local_db.get_file_path(updated_file.id).unwrap();
-        let local_path = self.local_root.join(&path);
-
-        let metadata = fs::metadata(local_path.as_ref()).await?;
-        if !metadata.is_dir() {
-            self.remote_drive.save_file(&local_path, &path).await?;
-            return Ok(());
-        }
-
-        if updated_file.is_new() {
-            // Could cause errors if a file becomes a folder
-            self.remote_drive.create_dir(&path).await?;
-        }
-        return Ok(());
+    fn push_deletes<'a>(&self, tables: &mut PushTables<'a>) {
+        tables.queued_deletes
     }
+}
+
+
+struct PushTables<'a> {
+    local_files:FilesTable<'a>,
+    remote_files: FilesTableMut<'a>,
+    remote_children: ChildrenTableMut<'a>,
+    queued_updates: QueuedUpdatesTableMut<'a>,
+    queued_deletes: QueuedDeletesTableMut<'a>,
 }

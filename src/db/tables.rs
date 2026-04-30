@@ -1,23 +1,12 @@
 use redb::{MultimapTable, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, Table, TableDefinition};
-use crate::db::tables::file::{File, FileId, FileIdOrd};
+use crate::db::tables::{file::{File, FileId}, queued_deltas::QueuedDelete};
 
 
 pub mod timestamp;
 pub mod file;
 #[macro_use]
 pub mod macros;
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QueuedUpdate {
-    pub file_id: FileId,
-    pub depth: FileIdOrd,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QueuedDeletion {
-    pub deleted_at: chrono::DateTime<chrono::Utc>,
-    pub file_id: FileId,
-}
+pub mod queued_deltas;
 
 pub const FILES: TableDefinition<FileId, &File> = TableDefinition::new("files");
 pub type FilesTable<'a> = ReadOnlyTable<FileId, &'a File>;
@@ -29,5 +18,10 @@ pub const CHILDREN: MultimapTableDefinition<FileId, FileId> =
 pub type ChildrenTable = ReadOnlyMultimapTable<FileId, FileId>;
 pub type ChildrenTableMut<'a> = MultimapTable<'a, FileId, FileId>;
 
-pub const QUEUED_UPDATES: TableDefinition<FileIdOrd, ()> = TableDefinition::new("queued_updates");
-pub const QUEUED_DELETES: TableDefinition<FileIdOrd, ()> = TableDefinition::new("queued_deletes");
+pub const QUEUED_UPDATES: TableDefinition<FileId,()> = TableDefinition::new("queued_updates");
+pub type QueuedUpdatesTable = ReadOnlyTable<FileId, ()>;
+pub type QueuedUpdatesTableMut<'a> = Table<'a, FileId, ()>;
+
+pub const QUEUED_DELETES: TableDefinition<FileId,()> = TableDefinition::new("queued_deletes");
+pub type QueuedDeletesTable = ReadOnlyTable<FileId, QueuedDelete>;
+pub type QueuedDeletesTableMut<'a> = Table<'a, FileId, QueuedDelete>;

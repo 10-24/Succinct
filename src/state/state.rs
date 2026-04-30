@@ -1,3 +1,4 @@
+use crate::db::remote::RemoteDb;
 use crate::db::tables::CHILDREN;
 use crate::db::tables::ChildrenTableMut;
 use crate::db::tables::FILES;
@@ -11,6 +12,7 @@ use crate::state::file_id::FileId;
 use crate::state::file_id::FileIdOrd;
 use crate::state::prepare_deltas::DeltaKV;
 use crate::state::prepare_deltas::DeltaValue;
+use crate::state::remote_drive::remote_drive::RemoteDrive;
 use crate::tables_mut;
 use crate::{
     db::{Db, tables::QueuedDeletion},
@@ -25,22 +27,13 @@ use std::collections::BTreeMap;
 
 pub struct State {
     pub(crate) local_db: Db,
-    pub(crate) remote_drive: opendal::Operator,
+    pub(crate) remote_db: RemoteDb,
+    pub(crate) drive: RemoteDrive,
     pub(crate) local_root: AbsPath,
 }
 
 impl State {
-    pub fn new(
-        local_db: Db,
-        remote_drive: opendal::Operator,
-        local_root: AbsPath,
-    ) -> Self {
-        Self {
-            local_db,
-            remote_drive,
-            local_root,
-        }
-    }
+    
 
     /// File and Folder creations cannot be implicit (Eg. If a parent and child file/folder are created, both must be included)
     pub async fn push_deltas(&mut self, deltas: BTreeMap<FileIdOrd, Delta>) {
@@ -56,6 +49,7 @@ impl State {
                 DeltaKind::Delete => self.handle_delete(id,&mut files_table,&mut children_table),
             }
         }
+        txn.commit();
     }
 
     /// Handles both Update and Create

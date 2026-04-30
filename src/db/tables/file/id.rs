@@ -2,6 +2,7 @@ use std::hash::{Hash};
 
 use bytemuck::{Pod, Zeroable};
 use derive_more::{Deref, From};
+use nohash::IsEnabled;
 use redb_derive::{Key, Value};
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +31,7 @@ use redb::Value;
     Zeroable,
 )]
 #[repr(transparent)]
-pub struct FileId(pub(crate) u64);
+pub struct FileId(pub u64);
 
 impl FileId {
    
@@ -94,3 +95,5 @@ impl FileIdOrd {
         self.child(name.as_ref()).extend(components)
     }
 }
+
+impl IsEnabled for FileId {}

@@ -46,12 +46,8 @@ impl<'a, K: Key + 'static, V: Key + Value + 'static> OpenWriteTable<'a> for Mult
 
 #[macro_export]
 macro_rules! tables {
-    ($db:expr, $($table:expr),+) => {{
-
-        // use $crate::db::tables::macros::OpenReadTable;
-        
-        let db: &$crate::db::Db = $db;
-        let txn = db.begin_read();
+    ($db:expr, $($table:expr),+) => {{ 
+        let txn = $db.begin_read();
         (
             $(
                 {
@@ -64,14 +60,11 @@ macro_rules! tables {
 
 #[macro_export]
 macro_rules! tables_mut {
-    ($writer:expr, $($table:expr),+) => {{
-        // use $crate::db::tables::macros::OpenWriteTable;
-        
-        let writer: &$crate::db::writer::DbWriter = $writer;
+    ($writer:expr, $($table:expr),+) => {{    
         (
             $(
                 {
-                    $crate::db::tables::macros::OpenWriteTable::open_table_mut($table, &writer.txn)
+                    $crate::db::tables::macros::OpenWriteTable::open_table_mut($table, &$writer.txn)
                 }
             ),+
         )

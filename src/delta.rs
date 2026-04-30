@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap};
 
 use inotify::{ EventMask, WatchMask};
-use tokio::sync::mpsc;
+
 
 use crate::{db::tables::file::{FileIdOrd, info::FileInfo}, state::file::{id::{FileId, FileIdOrd}, name::FileName}};
 
@@ -34,6 +34,7 @@ impl Delta {
     }
 }
 #[derive(Debug,Clone, Copy)]
+#[repr(u8)]
 pub enum DeltaData {
     Create(FileInfo),
     Update,
@@ -50,10 +51,13 @@ impl DeltaData {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Copy, Clone,FromPrimitive)]
 pub enum DeltaKind {
+    /// index: 0
     Create,
+    /// index: 1
     Update,
+    /// index: 2
     Delete,
 }
 
@@ -77,7 +81,7 @@ impl DeltaKind {
             _ => unreachable!()
         }
     }
- 
+  
 }
 
 fn has_any(event: &EventMask, target: &WatchMask) -> bool {
@@ -85,6 +89,29 @@ fn has_any(event: &EventMask, target: &WatchMask) -> bool {
     let event = event.bits();
     (target & event) != 0
 }
+
+impl From<u8> for DeltaKind {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => DeltaKind::Create,
+            1 => DeltaKind::Update,
+            2 => DeltaKind::Delete,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<DeltaKind> for u8 {
+    fn from(value: DeltaKind) -> Self {
+        match value {
+            DeltaKind::Create => 0,
+            DeltaKind::Update => 1,
+            DeltaKind::Delete => 2,
+        }
+    }
+}
+
+
 
 #[derive(Debug,Clone)]
 pub struct FileRecord {

@@ -3,24 +3,18 @@ use std::{collections::LinkedList, sync::Arc};
 use derive_more::Deref;
 use redb::{AccessGuard, ReadableDatabase, ReadableTable, ReadableTableMetadata};
 use rustc_hash::FxHashSet;
-use tokio::sync::Mutex;
-
-use tables::{CHILDREN, ChildrenTable, FILES, FilesTable, QUEUED_DELETES, QueuedDeletion};
+use tables::{CHILDREN, ChildrenTable, FILES, FilesTable};
 use writer::DbWriter;
 
 use crate::{
-     db::tables::{file::FileIdOrd, macros::OpenReadTable}, hashset, path::RelPath, state::file::{
-        File,
-        bytes::FileBytes,
-        id::{FileId, FileIdOrd},
-        name::FileName,
-     }
+     config::ROOT_NAME, db::tables::{file::{File, FileId, FileIdOrd, FileName, FileNameBuf}, macros::OpenReadTable}, hashset, path::RelPath
 
 };
 
 #[macro_use]
 pub mod tables;
 pub mod writer;
+pub mod remote;
 
 #[derive(Debug, Clone)]
 pub struct Db {
@@ -32,7 +26,7 @@ impl Db {
         let db = Self {
             conn: Arc::new(database),
         };
-        let writer = db.begin_write().await;
+        let writer = db.begin_write();
         writer.ensure_tables();
         writer.commit();
         db
@@ -67,15 +61,16 @@ impl Db {
     pub fn get_file_descendants(&self, parent_id: FileIdOrd) -> Vec<FileIdOrd> {
         fn descendants(
             parent_id: FileIdOrd,
-            children_table: &ChildrenTable,
-            output: &mut Vec<FileIdOrd>,
-        ) {
-            let mut children = children_table.get(*parent_id).unwrap();
-            while let Some(Ok(child_id)) = children.next() {
-                let child_id = child_id.value().into_ord(parent_id.depth + 1);
-                output.push(child_id);
-                descendants(child_id, children_table, output);
+            children_tbl: &ChildrenTable,
+            mut result: Vec<FileIdOrd>,
+        ) -> Vec<FileIdOrd> {
+            let mut children = children_tbl.get(*parent_id).unwrap();
+            while let Some(child_id) = children.next() {
+                let child_id = child_id.unwrap().value().into_ord(parent_id.depth + 1);
+                result = vec![..result, child_id];
+                result = descendants(child_id, children_tbl, result);
             }
+            result
         }
         
         let children_table = tables!(self,CHILDREN);
@@ -95,23 +90,23 @@ impl Db {
         ids
     }
 
-    pub fn get_file_path(&self, file_id: FileId) -> RelPath {
-        fn path_components<'a>(
-            file_id: FileId,
-            files: &'a FilesTable,
-            components: &mut Vec<&'a FileName>,
-        ) {
-            let file = files.get(file_id).unwrap().unwrap().value();
-            components.push(&file.value().name);
-            if !file_id.is_root() {
-                path_components(file.parent_id, &files, components);
+    pub fn get_file_path(id: FileId, files: &FilesTable) -> RelPath {
+        fn comp<'a>(
+            id: FileId,
+            files: &FilesTable,
+            components: Vec<FileNameBuf>,
+        ) -> Vec<FileNameBuf> {
+            if id == FileId::ROOT {
+                return vec![..components,ROOT_NAME];
             }
+            let f:&File = files.get(id).unwrap().unwrap().value();
+            let new_components = vec![..components, *f.name()];
+            comp(f.parent_id(), &files, new_components)
         }
-        let files = tables!(self,FILES);
-        let mut components_rev = Vec::with_capacity(8);
-        path_components(file_id, &files, &mut components_rev);
-
-        RelPath::from_components(components_rev.into_iter().rev()).unwrap()
+   
+        let components_rev = comp(id, &files,  vec![_;8]);
+        let components = components_rev.into_iter().rev();
+        RelPath::from_components(components)
     }
 
     /// Returns ancestors starting from root
