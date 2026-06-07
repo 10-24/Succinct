@@ -1,7 +1,7 @@
 use std::{collections::LinkedList, sync::Arc};
 
-use derive_more::Deref;
-use redb::{AccessGuard, ReadableDatabase, ReadableTable, ReadableTableMetadata};
+
+use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata};
 use rustc_hash::FxHashSet;
 use tables::{CHILDREN, ChildrenTable, FILES, FilesTable};
 use writer::DbWriter;
@@ -26,9 +26,6 @@ impl Db {
         let db = Self {
             conn: Arc::new(database),
         };
-        let writer = db.begin_write();
-        writer.ensure_tables();
-        writer.commit();
         db
     }
 
@@ -58,25 +55,19 @@ impl Db {
 
 
     /// Excludes parent
-    pub fn get_file_descendants(&self, parent_id: FileIdOrd) -> Vec<FileIdOrd> {
+    pub fn get_file_descendants(children_tbl:&ChildrenTable, parent_id: FileIdOrd) -> Vec<FileIdOrd> {
         fn descendants(
             parent_id: FileIdOrd,
             children_tbl: &ChildrenTable,
-            mut result: Vec<FileIdOrd>,
+            result: Vec<FileIdOrd>,
         ) -> Vec<FileIdOrd> {
-            let mut children = children_tbl.get(*parent_id).unwrap();
-            while let Some(child_id) = children.next() {
+            let children = children_tbl.get(*parent_id).unwrap();
+            children.fold(result, |result,child_id|{
                 let child_id = child_id.unwrap().value().into_ord(parent_id.depth + 1);
-                result = vec![..result, child_id];
-                result = descendants(child_id, children_tbl, result);
-            }
-            result
+                descendants(child_id, children_tbl, vec![..result,child_id])
+            })
         }
-        
-        let children_table = tables!(self,CHILDREN);
-        let mut output = Vec::new();
-        descendants(parent_id, &children_table, &mut output);
-        output
+        descendants(parent_id, &children_tbl, vec![])
     }
 
     fn all_ids(&self) -> FxHashSet<FileId> {
@@ -141,4 +132,6 @@ impl Db {
         let file = files.get(&file_id).unwrap()?;
         Some(file.value().is_dir)
     }
+
+    
 }

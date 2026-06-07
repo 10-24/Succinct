@@ -18,10 +18,15 @@ pub const CHILDREN: MultimapTableDefinition<FileId, FileId> =
 pub type ChildrenTable = ReadOnlyMultimapTable<FileId, FileId>;
 pub type ChildrenTableMut<'a> = MultimapTable<'a, FileId, FileId>;
 
+
+pub const QUEUED_CREATES: TableDefinition<FileId,()> = TableDefinition::new("queued_creates");
+pub type QueuedCreatesTable = ReadOnlyTable<FileId, ()>;
+pub type QueuedCreatesTableMut<'a> = Table<'a, FileId, ()>;
+
 pub const QUEUED_UPDATES: TableDefinition<FileId,()> = TableDefinition::new("queued_updates");
 pub type QueuedUpdatesTable = ReadOnlyTable<FileId, ()>;
 pub type QueuedUpdatesTableMut<'a> = Table<'a, FileId, ()>;
 
-pub const QUEUED_DELETES: TableDefinition<FileId,()> = TableDefinition::new("queued_deletes");
+pub const QUEUED_DELETES: TableDefinition<FileId,QueuedDelete> = TableDefinition::new("queued_deletes");
 pub type QueuedDeletesTable = ReadOnlyTable<FileId, QueuedDelete>;
 pub type QueuedDeletesTableMut<'a> = Table<'a, FileId, QueuedDelete>;

@@ -5,6 +5,6 @@ use crate::{db::tables::{file::FileId, timestamp::Timestamp}};
 
 #[derive(Debug,PartialEq, Eq, PartialOrd, Ord,Key,Value)]
 pub struct QueuedDelete {
-    parent_id: FileId,
-    timestamp: Timestamp,
+    pub parent_id: FileId,
+    pub timestamp: Timestamp,
 }
