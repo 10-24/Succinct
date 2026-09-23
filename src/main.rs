@@ -1,6 +1,4 @@
-#![feature(str_as_str)]
-#![feature(portable_simd)]
-#[cfg(target_os = "linux")]
+mod context;
 
 use std::hash::{Hash, Hasher};
 use rustc_hash::FxHashSet;
@@ -8,16 +6,17 @@ use rustc_hash::FxHashSet;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use tokio::join;
 
+
 use crate::{
-    config::config::Config,
+    context::user_config::Config,
     db::{Db},
     state::state::State,
     tree_sitter::tree_sitter::TreeSitter,
 };
-#[macro_use]
-mod macros;
+
+
 mod delta;
-mod path;
+
 mod state;
 
 mod config;
@@ -36,9 +35,13 @@ mod tree_sitter;
  */
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let db = Builder::new_local("succinct.db").build().await?;
+    let conn = db.connect()?;
+
+
     let (config, redb) = join!(Config::load(), Config::init_local_database());
-    let (db,ignore, remote_drive) = join!(Db::init(redb),config.create_ignore(), config.connect_remote_drive());
+    let (db,ignore, remote_drive) = config.create_ignore();
 
     let mut delta_rx = TreeSitter::start(config.local.root_path.clone(), ignore, db.clone());
     let mut state = State::new(local_reader, remote_drive, config.local.root_path.clone());
