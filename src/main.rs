@@ -1,28 +1,18 @@
+use fjall::Database;
+
+use crate::context::Context;
+
+
+
+
+
+
+mod constants;
 mod context;
-
-use std::hash::{Hash, Hasher};
-use rustc_hash::FxHashSet;
-
-use rustc_hash::{FxBuildHasher, FxHashMap};
-use tokio::join;
-
-
-use crate::{
-    context::user_config::Config,
-    db::{Db},
-    state::state::State,
-    tree_sitter::tree_sitter::TreeSitter,
-};
-
-
-mod delta;
-
-mod state;
-
-mod config;
 mod db;
+mod delta;
+mod util;
 mod tree_sitter;
-
 /*
  * Unimplemented Features:
  * Handle if you update a child then delete the parent.
@@ -36,24 +26,25 @@ mod tree_sitter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = Builder::new_local("succinct.db").build().await?;
-    let conn = db.connect()?;
+
+    let ctx = Context::load().await?;
+    let db = Database::builder(path)
+    // Attach listeners
+    loop {
+
+        
+        // Pull changes from remote DB, excluding those that collide with local changes
+    
+        // Push queued changes to opendal
+    
+        // Update remote db
 
 
-    let (config, redb) = join!(Config::load(), Config::init_local_database());
-    let (db,ignore, remote_drive) = config.create_ignore();
-
-    let mut delta_rx = TreeSitter::start(config.local.root_path.clone(), ignore, db.clone());
-    let mut state = State::new(local_reader, remote_drive, config.local.root_path.clone());
-    while let Some(deltas) = delta_rx.recv().await {
-        state.push_deltas(deltas).await;
+        // Aggregate File changes
+        // Save queued changes to local_db
     }
+
+   
 }
 
-pub fn hashmap<K, V>(capacity: usize) -> FxHashMap<K, V> {
-    FxHashMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
-}
-pub fn hashset<T>(capacity: usize) -> FxHashSet<T> {
-    FxHashSet::with_capacity_and_hasher(capacity, FxBuildHasher::default())
-}
 

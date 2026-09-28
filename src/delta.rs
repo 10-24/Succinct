@@ -1,125 +1,71 @@
-use std::{collections::BTreeMap};
+use std::{iter, ops::Not, path::PathBuf, str, time};
 
-use inotify::{ EventMask, WatchMask};
+use anyhow::{anyhow, ensure};
+use chrono::{DateTime, Utc};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 
-use crate::{db::tables::file::{FileIdOrd, info::FileInfo}, state::file::{id::{FileId, FileIdOrd}, name::FileName}};
+mod kind;
+use crate::util::{fhasher::FHasher, relpath::RelPath};
 
-pub type Deltas = BTreeMap<FileIdOrd,Delta>;
 
-#[derive(Debug,Clone, Copy)]
+#[derive(Hash, Debug)]
 pub struct Delta {
-    pub data: DeltaData,
-    pub index: u16,
+    kind: DeltaKind,
+    path: RelPath,
 }
 
 impl Delta {
-    pub fn new_create(index:u16,info:FileInfo,) -> Self {
-        Delta {
-            index,
-            data: DeltaData::Create(info)
-        }
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        let path = self.path.as_bytes();
+        let mut v = Vec::with_capacity(1 + path.len());
+        v.push(self.kind as u8);
+        v.extend_from_slice(path);
+        v.into_boxed_slice()
     }
-    pub fn new_update(index:u16) -> Self {
-        Delta {
-            index,
-            data: DeltaData::Update
-        }
-    }
-    pub fn new_delete(index:u16) -> Self {
-        Delta {
-            index,
-            data: DeltaData::Delete
-        }
-    }
-}
-#[derive(Debug,Clone, Copy)]
-#[repr(u8)]
-pub enum DeltaData {
-    Create(FileInfo),
-    Update,
-    Delete,
-}
 
-impl DeltaData {
-    pub fn kind(&self) -> DeltaKind {
-        match self {
-            DeltaData::Create(_) => DeltaKind::Create,
-            DeltaData::Update => DeltaKind::Update,
-            DeltaData::Delete => DeltaKind::Delete,
-        }
-    }
-}
+    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
 
-#[derive(Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Copy, Clone,FromPrimitive)]
-pub enum DeltaKind {
-    /// index: 0
-    Create,
-    /// index: 1
-    Update,
-    /// index: 2
-    Delete,
-}
-
-impl DeltaKind {
-    pub const WATCH_MASK: WatchMask = Self::CREATE_MASKS.union(Self::UPDATE_MASKS).union(Self::DELETE_MASKS);
+        let kind = bytes.get(0).ok_or_else(|| anyhow!("Delta bytes is empty"))?;
+        let kind = DeltaKind::try_from(*kind)?;
         
-    const CREATE_MASKS: WatchMask = WatchMask::CREATE.union(WatchMask::MOVED_TO);
-    const UPDATE_MASKS: WatchMask = WatchMask::CLOSE_WRITE;
-    const DELETE_MASKS: WatchMask = WatchMask::DELETE.union(WatchMask::MOVED_FROM);
+        let path = str::from_utf8(&bytes[1..])?;
+        let path = RelPath::from_str_unchecked(path);
+
+        Ok(Self {
+            kind,
+            path
+        })
+    }
+}
+
+
+
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct DeltaId(u64);
+
+impl DeltaId {
+
+    const ENTROPY_BITS: u32 = 16;
+    const TIMESTAMP_MASK: u64 = u64::MAX << Self::ENTROPY_BITS;
+    const ENTROPY_MASK: u64 = !Self::TIMESTAMP_MASK;
     
-    pub fn from_event_mask(mask:EventMask) -> DeltaKind {
+    pub fn new(delta: &Delta, timestamp: &DateTime<Utc>) -> Self {
+        let timestamp = timestamp.timestamp_millis() as u64;
+        let entropy = FHasher::new().hash(timestamp).hash(delta).finish();
+
+        let timestamp_reigon = timestamp << Self::ENTROPY_BITS;
+        let entropy_reigon = entropy & Self::ENTROPY_MASK;
         
-        let is_create = has_any(&mask, &Self::CREATE_MASKS);
-        let is_update = has_any(&mask, &Self::UPDATE_MASKS);
-        let is_delete = has_any(&mask, &Self::DELETE_MASKS);
-        
-        match (is_create, is_update, is_delete) {
-            (true, _, _) => DeltaKind::Create,
-            (_, true, _) => DeltaKind::Update,
-            (_, _, true) => DeltaKind::Delete,
-            _ => unreachable!()
-        }
+        let id = timestamp_reigon | entropy_reigon;
+        Self(id)
     }
-  
-}
 
-fn has_any(event: &EventMask, target: &WatchMask) -> bool {
-    let target = target.bits();
-    let event = event.bits();
-    (target & event) != 0
-}
-
-impl From<u8> for DeltaKind {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => DeltaKind::Create,
-            1 => DeltaKind::Update,
-            2 => DeltaKind::Delete,
-            _ => unreachable!(),
-        }
+    pub fn created_at(self) -> DateTime<Utc> {
+        let timestamp_reigon = self.0 & Self::TIMESTAMP_MASK;
+        let timestamp = timestamp_reigon >> Self::ENTROPY_BITS;
+        DateTime::<Utc>::from_timestamp_millis(timestamp as i64).unwrap()
     }
 }
-
-impl From<DeltaKind> for u8 {
-    fn from(value: DeltaKind) -> Self {
-        match value {
-            DeltaKind::Create => 0,
-            DeltaKind::Update => 1,
-            DeltaKind::Delete => 2,
-        }
-    }
-}
-
-
-
-#[derive(Debug,Clone)]
-pub struct FileRecord {
-    pub name: FileName,
-    pub parent_id: FileId
-}
-
-pub type DeltaSender = mpsc::Sender<Deltas>;
-pub type DeltaReceiver = mpsc::Receiver<Deltas>;
-
-pub type DeltaKV = (FileIdOrd, Delta);

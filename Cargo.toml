@@ -10,17 +10,22 @@ chrono = { version = "0.4.44", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["deref", "from", "into"] }
 futures = "0.3.32"
 inotify = "0.10"
-opendal = { version = "0.55.0", features = ["services-gdrive","services-compfs"] }
 rustc-hash = "2.1.1"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 confy = "2.0.0"
 toml = "1.0.7"
-colored = "3.1.1"
 fjall = "3.1.10"
 tokio = { version = "1.53.1", features = ["full"]}
 tokio-stream = "0.1.19"
 directories = "6.0.0"
 globset = "0.4.20"
 figment = "0.10.19"
+const_format = "0.2.36"
+object_store = "0.14.2"
+thiserror = "2.0.21"
+num_enum = "0.7.6"
+strum = { version = "0.28.0", features = ["derive"] }
+async-compression = { version = "0.4.48", features = ["tokio", "zstd"] }
+tokio-tar = "0.3.1"
 
 

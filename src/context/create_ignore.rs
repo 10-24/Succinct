@@ -1,37 +1,16 @@
-use crate::{config::{
-    IGNORE_FILE_NAME,
-    user_config::{Config, panic_required_file},
-}, path::{AbsPath, fs}};
-use anyhow::anyhow;
-use colored::*;
+use anyhow::{bail, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
 
-impl Config {
-    pub async fn create_ignore(&self) -> anyhow::Result<GlobSet> {
-        let path = self.local.root_path.child(IGNORE_FILE_NAME);
-        let file = fs::read_to_string(&path).await.unwrap_or_else(panic_required_file(&path));
 
-        
-        let mut builder = GlobSetBuilder::new();
-        for line in file.lines() {
-            let glob = Glob::new(&line).map_err(parse_err(&line, &path))?;
-            builder.add(glob);
-        }
-        Ok(builder.build()?)
+pub async fn create_exclude(globs: impl Iterator<Item = &str>) -> Result<GlobSet> {
+    let mut builder = GlobSetBuilder::new();
+    for glob_str in globs {
+        match Glob::new(glob_str) {
+            Ok(glob) => builder.add(glob),
+            Err(e) => bail!("Failed to parse excluded glob '{glob_str}': {e}"),
+        };
     }
+    Ok(builder.build()?)
 }
 
-fn parse_err(line: &str, path: &AbsPath) -> impl FnOnce(globset::Error) -> anyhow::Error {
-    move |e: globset::Error| {
-        anyhow!(
-            "
-            Failed to parse {IGNORE_FILE_NAME}
-            -->  {}
-            Error: {e}
-            Path: {path}
-            ",
-            line.underline(),
-        )
-    }
-}

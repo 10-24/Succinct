@@ -1,26 +1,27 @@
-use std::path::{Path};
+use std::path::{Path, PathBuf};
 
-use directories::ProjectDirs;
-
-use crate::context::{config::Config, constants::{APP_NAME, CONFIG_FILE_NAME, ORG_NAME}};
+use crate::constants::CONFIG_FILE_NAME;
 
 
 
-pub type ConstPath = Box<Path>;
+
+
+pub type BPath = Box<Path>;
 
 pub struct AppPaths {
-    config: Box<Path>,
-    ignore: Box<Path>,
-    db: Box<Path>,
+    config_file: BPath,
+    db_file: BPath,
 }
 
 impl AppPaths {
-    pub fn resolve(config) -> Option<Self> {
-        let dirs = ProjectDirs::from("com", ORG_NAME, APP_NAME)?;
-        Self {
-            config: dirs.config_local_dir().join(CONFIG_FILE_NAME).into(),
+    pub fn from(sync_dir: &Path) -> Self {
 
-            db: dirs.state_dir().unwrap().join(DB)
+        let config_file = sync_dir.join(CONFIG_FILE_NAME).into();
+        let db_file = sync_dir.join("").into();
+        Self {
+            config_file,
+            db_file,
         }
     }
 }
+
