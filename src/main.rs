@@ -12,7 +12,7 @@ mod context;
 mod db;
 mod delta;
 mod util;
-mod tree_sitter;
+mod notify;
 /*
  * Unimplemented Features:
  * Handle if you update a child then delete the parent.
