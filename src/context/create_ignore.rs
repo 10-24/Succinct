@@ -3,6 +3,8 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 
 
 
+
+
 pub async fn create_exclude(globs: impl Iterator<Item = &str>) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for glob_str in globs {
@@ -14,3 +16,7 @@ pub async fn create_exclude(globs: impl Iterator<Item = &str>) -> Result<GlobSet
     Ok(builder.build()?)
 }
 
+struct CachedGlob {
+    set: GlobSet,
+    bloom_filter: u64,
+}

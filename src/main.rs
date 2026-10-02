@@ -23,12 +23,12 @@ mod tree_sitter;
  * Add check in walk dir for uninitialized files
  * Graceful shutdown
  */
-
+mod walk_dir;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ctx = Context::load().await?;
-    let db = Database::builder(path)
+    
     // Attach listeners
     loop {
 

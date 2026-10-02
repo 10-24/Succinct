@@ -1,6 +1,8 @@
-use inotify::EventMask;
+use inotify::{EventMask, WatchMask};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use strum::VariantArray;
 
-#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Hash)]
+#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Hash, VariantArray)]
 #[repr(u8)]
 pub enum DeltaKind {
     Modify,
@@ -26,5 +28,10 @@ impl DeltaKind {
                 )
             },
         }
+    }
+
+    pub fn all_inotify_masks() -> WatchMask {
+        Self::VARIANTS.into_iter().copied().map(Self::as_inotify_mask).reduce(WatchMask::union).unwrap()
+ 
     }
 }

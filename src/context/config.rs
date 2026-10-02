@@ -14,7 +14,7 @@ use crate::{constants::{DEFAULT_BUCKET_NAME, DEFAULT_DEBOUNCE_DURATION}, context
 pub struct Config {
     pub debounce_duration: Duration,
     #[serde(default)]
-    pub exclude: Vec<String>,
+    pub exclude: Option<Vec<String>>,
     pub remote: RemoteConfig,
 }
 
