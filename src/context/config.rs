@@ -1,39 +1,38 @@
-use std::{collections::HashMap, path::Path, time::Duration};
+use std::{collections::HashMap, error::Error, path::{Path, PathBuf}, sync::Arc, time::Duration};
 
-use anyhow::Result;
-use directories::{ProjectDirs, UserDirs};
+
+
+use camino::Utf8Path;
 use serde::Deserialize;
+use serde_inline_default::serde_inline_default;
 
-
-use crate::{constants::{DEFAULT_BUCKET_NAME, DEFAULT_DEBOUNCE_DURATION}, context::{app_paths::BPath, config::default_config::DefaultConfig, constants::{DEFAULT_BUCKET_NAME, DEFAULT_ROOT_DIR_NAME}, raw_config::RawConfig}};
-
-
-
+use crate::constants::{self, DEFAULT_BUCKET_NAME, DEFAULT_BUCKET_REGION, DEFAULT_DEBOUNCE_DURATION};
 
 #[derive(Debug,Deserialize)]
+#[serde_inline_default]
 pub struct Config {
-    pub debounce_duration: Duration,
+    
+    pub sync_dir: Arc<Utf8Path>,
+    
     #[serde(default)]
-    pub exclude: Option<Vec<String>>,
+    pub exclude: Vec<Box<str>>,
+    
+    #[serde_inline_default(DEFAULT_DEBOUNCE_DURATION)]
+    pub debounce_duration: Duration,
+    
     pub remote: RemoteConfig,
 }
 
-
 #[derive(Debug, Deserialize, Clone)]
+#[serde_inline_default]
 struct RemoteConfig {
-    account_id: String,
-    key_id: String,
-    #[serde(default = "default_bucket")]
-    bucket: String,
+    key_id: Box<str>,
+    key_secret: Box<str>,
+    #[serde_inline_default(DEFAULT_BUCKET_REGION.into())]
+    region: Box<str>,
+    #[serde_inline_default(DEFAULT_BUCKET_NAME.into())]
+    bucket: Box<str>,
 }
 
 
 
-
-
-fn default_debounce_duration() -> Duration {
-    DEFAULT_DEBOUNCE_DURATION
-}
-fn default_bucket() -> String {
-    DEFAULT_BUCKET_NAME.into()
-}

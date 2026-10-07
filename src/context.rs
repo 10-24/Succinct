@@ -1,58 +1,53 @@
-use std::{hash::{Hash, Hasher}, path::Path};
+use std::{
+    hash::{Hash, Hasher},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context as _, Result};
 
+use camino::{Utf8Path, Utf8PathBuf};
+use directories::{BaseDirs, ProjectDirs};
 use fjall::Database;
-use tokio::{fs, try_join};
+use futures::future::try_join_all;
+use tokio::{fs, join, try_join};
+use xxhash_rust::xxh32::xxh32;
 
-use crate::{constants::CONFIG_FILE_NAME, context::{app_paths::AppPaths, config::Config, environment::Environment}, util::fhasher::FHasher};
-
+use crate::{
+    constants::{self, CONFIG_FILE_NAME}, context::{config::Config, machine_id::MachineId}, util::fhasher::FHasher,
+};
+pub mod machine_id;
 pub mod config;
 mod create_ignore;
-mod app_paths;
-mod environment;
 
 pub struct Context {
     config: Config,
-    paths: AppPaths,
-    machine_id: u16,
-    environment: Environment,
-    db: Database
+    machine_id: MachineId,
 }
 
 impl Context {
+    pub async fn load() -> Result<Context> {
+        let dirs = BaseDirs::new().unwrap();
+        let home_dir = Utf8PathBuf::try_from(dirs.home_dir().to_owned()).unwrap();
+        let config_file = home_dir.join(CONFIG_FILE_NAME);
+        
+        let (config, machine_id) = join!(Self::read_config(&config_file), MachineId::read());
 
-    pub async fn load() -> Result<Context>  {
-        let enviroment = Environment::new()?;
-        
-        let config_path = enviroment.sync_dir.join(CONFIG_FILE_NAME);
-        let (config, machine_id) = try_join!(Self::read_config(&config_path), Self::read_machine_id())?;
-        
-        Ok(Self {
-            config,
-            machine_id,
-            environment: enviroment,
+        Ok(Self { config: config?, machine_id:machine_id? })
+    }
+
+    async fn read_config(path: &Utf8Path) -> Result<Config> {
+        let config_str = fs::read_to_string(path).await?;
+
+        toml::from_str(&config_str).with_context(|| {
+            format!(
+                "Failed to deserialize config ({path})",
+            )
         })
     }
 
-
-    async fn read_config(path: &Path) -> Result<Config> {
-        let config_str = fs::read_to_string(path).await?;
-        
-        toml::from_str(&config_str).with_context(|| format!("Failed to deserialize {} ({})", CONFIG_FILE_NAME, path.to_string_lossy()))
-    }
-    
-    async fn read_machine_id() -> Result<u16> {
-        const MACHINE_ID_PATH: &str = "/etc/machine-id";
-        let id_str = fs::read_to_string(MACHINE_ID_PATH).await.with_context(|| format!("Failed to read machine id ({MACHINE_ID_PATH})"))?;
-
    
-        let hash = FHasher::new().hash(&id_str.trim()).finish();
-        Ok(hash as u16)
-    }
-
- 
-
-  
 }
+
+
+
 
