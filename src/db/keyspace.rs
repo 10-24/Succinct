@@ -1,13 +1,14 @@
 #[path = "keyspaces_macro.rs"]
 mod keyspaces_macro;
-use std::{marker::PhantomData, path::Path};
+use std::{marker::PhantomData, path::Path, sync::Arc};
 
+use camino::Utf8Path;
 use keyspaces_macro::keyspaces;
 use tokio::io::{self, AsyncWriteExt, BufReader};
 use async_compression::{self as compression, Level, tokio::{bufread::ZstdDecoder, write::{GzipEncoder, ZstdEncoder}}};
 
 keyspaces! {
-    FsState, "fs", String => bool;
+    FsState, "fs", Arc<Utf8Path> => bool;
 }
 
 pub trait Ks {
