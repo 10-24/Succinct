@@ -1,29 +1,23 @@
-use std::{
-    hash::{Hash, Hasher},
-    path::{Path, PathBuf},
-};
+
+use std::{default, sync::Arc};
 
 use anyhow::{Context as _, Result};
-
 use camino::{Utf8Path, Utf8PathBuf};
-use directories::{BaseDirs, ProjectDirs};
-use fjall::Database;
-use futures::future::try_join_all;
+use directories::BaseDirs;
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use tokio::{fs, join, try_join};
-use xxhash_rust::xxh32::xxh32;
-
+use object_store::aws::{AmazonS3, AmazonS3Builder, AmazonS3ConfigKey};
+use tokio::{fs, join};
 use crate::{
-    constants::{self, CONFIG_FILE_NAME}, context::{config::Config, create_ignore::create_exclude, machine_id::MachineId}, util::fhasher::FHasher,
+    constants::{CONFIG_FILE_NAME, DEFAULT_REMOTE_CONFIG}, context::{config::{Config, RemoteConfig}, machine_id::MachineId},
 };
 pub mod machine_id;
 pub mod config;
-mod create_ignore;
 
 pub struct Context {
-    config: Config,
-    machine_id: MachineId,
-    exclude: GlobSet,
+    pub config: Config,
+    pub machine_id: MachineId,
+    pub exclude: Arc<GlobSet>,
+    pub object_store: AmazonS3
 }
 
 impl Context {
@@ -35,8 +29,9 @@ impl Context {
         let (config, machine_id) = join!(Self::read_config(&config_file), MachineId::read());
         let (config,machine_id) = (config?, machine_id?);
         
-        let exclude = Self::create_exclude(&config.exclude)?;
-        Ok(Self { config, machine_id, exclude })
+        let object_store = Self::create_object_store(&config.remote).with_context(|| "Failed to create object store.")?;
+        let exclude = Self::create_exclude(&config.exclude)?.into();
+        Ok(Self { config, machine_id, exclude, object_store })
     }
 
     async fn read_config(path: &Utf8Path) -> Result<Config> {
@@ -57,7 +52,20 @@ impl Context {
         }
         Ok(builder.build()?)
     }
-   
+
+    fn create_object_store(config: &RemoteConfig) -> object_store::Result<AmazonS3> {
+    
+        let entries = DEFAULT_REMOTE_CONFIG
+            .iter()
+            .map(|(k, v)| (*k, v.as_ref()))
+            .chain(config.iter().map(|(k, v)| (*k, v.as_ref())));
+    
+        let mut builder = AmazonS3Builder::new();
+        for (key, value) in entries {
+            builder = builder.with_config(key, value);
+        }
+        builder.build()
+    }
 }
 
 

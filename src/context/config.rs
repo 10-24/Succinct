@@ -3,6 +3,8 @@ use std::{collections::HashMap, error::Error, path::{Path, PathBuf}, sync::Arc, 
 
 
 use camino::Utf8Path;
+use object_store::aws::AmazonS3ConfigKey;
+use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use serde_inline_default::serde_inline_default;
 
@@ -20,19 +22,12 @@ pub struct Config {
     #[serde_inline_default(DEFAULT_DEBOUNCE_DURATION)]
     pub debounce_duration: Duration,
     
+    /// #[AmazonS3ConfigKey]: 
     pub remote: RemoteConfig,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-#[serde_inline_default]
-struct RemoteConfig {
-    key_id: Box<str>,
-    key_secret: Box<str>,
-    #[serde_inline_default(DEFAULT_BUCKET_REGION.into())]
-    region: Box<str>,
-    #[serde_inline_default(DEFAULT_BUCKET_NAME.into())]
-    bucket: Box<str>,
-}
 
 
 
+
+pub type RemoteConfig = FxHashMap<AmazonS3ConfigKey, Box<str>>;

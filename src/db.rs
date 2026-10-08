@@ -23,8 +23,6 @@ impl Db {
         let raw_keyspace = self.0.keyspace(K::NAME, Default::default).unwrap();
         Keyspace::<K>::new(raw_keyspace)
     }
-
-
 }
 
 

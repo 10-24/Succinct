@@ -41,15 +41,15 @@ mod notify;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
 
-    let ctx = Context::load().await;
-    let walk_dir_stream = walk_dir(ctx.environment().sync_dir.clone(), ctx.exclude().clone()).filter_map(Result::ok);
+    let ctx = Context::load().await?;
+    let walk_dir_stream = walk_dir(ctx.config.sync_dir.clone(), ctx.exclude.clone()).filter_map(Result::ok);
     
-    let notify = Notify::new(ctx.config().debounce_duration);
+    let notify = Notify::new(ctx.config.debounce_duration);
     notify.watch_dirs(walk_dir_stream);
 
     
     loop {
-
+        
         
        
     }
