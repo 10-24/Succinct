@@ -4,16 +4,16 @@ use strum::VariantArray;
 
 #[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Hash, VariantArray)]
 #[repr(u8)]
-pub enum DeltaKind {
+pub enum EventKind {
     Modify,
     Delete,
 }
 
 
-impl DeltaKind {
+impl EventKind {
     pub const fn as_event_mask(self) -> inotify::EventMask {
         match self {
-            DeltaKind::Modify => {
+            EventKind::Modify => {
                 inotify::EventMask::CREATE.union(
                     inotify::EventMask::MOVED_TO
                 ).union(
@@ -22,7 +22,7 @@ impl DeltaKind {
                     inotify::EventMask::CLOSE_WRITE
                 )                
             }
-            DeltaKind::Delete => {
+            EventKind::Delete => {
                 inotify::EventMask::DELETE.union(
                     inotify::EventMask::MOVED_FROM
                 )
