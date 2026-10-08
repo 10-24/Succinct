@@ -27,5 +27,9 @@ num_enum = "0.7.6"
 strum = { version = "0.28.0", features = ["derive"] }
 async-compression = { version = "0.4.48", features = ["tokio", "zstd"] }
 tokio-tar = "0.3.1"
+clap = "4.6.7"
+camino = { version = "1.2.6", features = ["serde1"] }
+xxhash-rust = { version = "0.8.19", features = ["xxh32"] }
+serde-inline-default = "1.0.2"
 
 

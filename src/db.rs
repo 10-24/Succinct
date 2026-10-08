@@ -9,7 +9,7 @@ use crate::db::keyspace::{Keyspace, Ks};
 
 
 pub mod keyspace;
-
+mod model;
 #[derive(Clone)]
 pub struct Db(Database);
 
