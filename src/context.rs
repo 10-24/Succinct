@@ -1,47 +1,73 @@
-
-use std::{default, sync::Arc};
-
 use anyhow::{Context as _, Result};
-use camino::{Utf8Path, Utf8PathBuf};
-use directories::BaseDirs;
+use camino::Utf8Path;
+use derive_more::Deref;
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use object_store::aws::{AmazonS3, AmazonS3Builder, AmazonS3ConfigKey};
-use tokio::{fs, join};
-use crate::{
-    constants::{CONFIG_FILE_NAME, DEFAULT_REMOTE_CONFIG}, context::{config::{Config, RemoteConfig}, machine_id::MachineId},
+use object_store::{
+    RetryConfig,
+    aws::{AmazonS3, AmazonS3Builder},
 };
-pub mod machine_id;
-pub mod config;
+use std::{path::Path, sync::Arc};
 
-pub struct Context {
+use crate::{
+    context::{
+        app_paths::AppPaths,
+        config::{Config, RemoteConfig},
+        machine_id::MachineId,
+    },
+    database::db::Db,
+};
+use redb::Database;
+use tokio::{fs, io, join, try_join};
+pub mod app_paths;
+pub mod config;
+pub mod machine_id;
+
+
+
+#[derive(Clone, Deref)]
+pub struct Context(Arc<ContextFields>);
+
+struct ContextFields {
     pub config: Config,
     pub machine_id: MachineId,
     pub exclude: Arc<GlobSet>,
-    pub object_store: AmazonS3
+    pub object_store: AmazonS3,
+    pub paths: AppPaths,
+    pub db: Databases,
+    
 }
 
-impl Context {
+impl Context{
     pub async fn load() -> Result<Context> {
-        let dirs = BaseDirs::new().unwrap();
-        let home_dir = Utf8PathBuf::try_from(dirs.home_dir().to_owned()).unwrap();
-        let config_file = home_dir.join(CONFIG_FILE_NAME);
         
+        let config_file = AppPaths::config_file();
         let (config, machine_id) = join!(Self::read_config(&config_file), MachineId::read());
-        let (config,machine_id) = (config?, machine_id?);
-        
-        let object_store = Self::create_object_store(&config.remote).with_context(|| "Failed to create object store.")?;
+        let (config, machine_id) = (config?, machine_id?);
+
+        let paths = AppPaths::new(&config).await?;
+        let object_store = Self::create_object_store(&config.remote)?;
+
         let exclude = Self::create_exclude(&config.exclude)?.into();
-        Ok(Self { config, machine_id, exclude, object_store })
+        let databases = Self::create_databases(&paths).await?;
+        
+        let fields = ContextFields {
+            config,
+            machine_id,
+            exclude,
+            object_store,
+            paths,
+            db: databases
+        };
+        let context = Self(Arc::from(fields));
+        
+        Ok(context)
     }
 
-    async fn read_config(path: &Utf8Path) -> Result<Config> {
+    async fn read_config(path: &Path) -> Result<Config> {
         let config_str = fs::read_to_string(path).await?;
 
-        toml::from_str(&config_str).with_context(|| {
-            format!(
-                "Failed to deserialize config ({path})",
-            )
-        })
+        toml::from_str(&config_str)
+            .with_context(|| format!("Failed to deserialize config ({})",path.to_string_lossy()))
     }
 
     fn create_exclude(globs: &[impl AsRef<str>]) -> Result<GlobSet> {
@@ -54,20 +80,34 @@ impl Context {
     }
 
     fn create_object_store(config: &RemoteConfig) -> object_store::Result<AmazonS3> {
-    
-        let entries = DEFAULT_REMOTE_CONFIG
-            .iter()
-            .map(|(k, v)| (*k, v.as_ref()))
-            .chain(config.iter().map(|(k, v)| (*k, v.as_ref())));
-    
-        let mut builder = AmazonS3Builder::new();
-        for (key, value) in entries {
-            builder = builder.with_config(key, value);
-        }
-        builder.build()
+        let http_client_opts = object_store::ClientOptions::new()
+            .with_timeout(config.timeout)
+            .with_connect_timeout(config.timeout);
+
+   
+        AmazonS3Builder::new()
+            .with_client_options(http_client_opts)
+            .with_retry(RetryConfig {
+                max_retries: config.max_retries as usize,
+                ..Default::default()
+            })
+            .build()
+    }
+
+    async fn create_databases(paths: &AppPaths) -> io::Result<Databases> {
+        let (staged_deltas_db, state_db) = try_join!(
+            Db::new(paths.staged_deltas_db()),
+            Db::new(paths.state_db())
+        )?;
+
+        Ok(Databases {
+            staged_deltas: staged_deltas_db,
+            state: state_db,
+        })
     }
 }
 
-
-
-
+pub struct Databases {
+    pub staged_deltas: Db,
+    pub state: Db,
+}

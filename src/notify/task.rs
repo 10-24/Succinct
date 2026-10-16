@@ -1,13 +1,14 @@
-use std::ffi::OsString;
+use std::ffi::{OsString};
 
 use chrono::Utc;
 use inotify::Inotify;
+use log::warn;
 use rustc_hash::FxHashMap;
 use strum::VariantArray;
 use tokio::{select, sync::mpsc};
 use tokio_stream::StreamExt;
 
-use crate::notify::{Command, Descriptors, Event, EventData, EventKind, INotifyStream};
+use crate::{notify::{Command, Descriptors, EventKind, INotifyStream, event::{Event, EventData}}, util::arc_path::IntoArcPath};
 
 pub struct NotifyTask {
     descriptors: Descriptors,
@@ -32,10 +33,9 @@ impl NotifyTask {
             select! {
                 Some(command) = cmd_rx.recv() =>
                     self.execute_command(command),
-                Some(event) = self.notify_stream.next() => {
-                    let event = event.unwrap();
-                    let delta = self.convert_event(event);
-                    event_tx.send(delta).await;
+                Some(inotify_event) = self.notify_stream.next() => {
+                    let event = self.handle_event(inotify_event.unwrap());
+                    event_tx.send(event).await;
                 }
             }
         }
@@ -63,28 +63,26 @@ impl NotifyTask {
             }
         }
     }
-
-    fn convert_event(&self, e: inotify::Event<OsString>) -> Event {
+    
+    fn handle_event(&mut self, inotify_event: inotify::Event<OsString>) -> Event {
+    
+        let event = self.convert_event(&inotify_event);
+        if event.1.kind.is_delete() {
+            self.descriptors.remove(&inotify_event.wd);
+        }
+        event
+    }
+    
+    fn convert_event(&self, e: &inotify::Event<OsString>) -> Event {
         let timestamp = Utc::now();
+        let event_data = EventData::from_inotify_event(e, timestamp).unwrap();
 
-        let kind = EventKind::VARIANTS
-            .iter()
-            .copied()
-            .find(|delta_kind| e.mask.contains(delta_kind.as_event_mask()))
-            .unwrap();
-        let is_dir = e.mask.contains(inotify::EventMask::ISDIR);
-
-        let event_data = EventData {
-            timestamp,
-            kind,
-            is_dir,
-        };
-
+        let child_name = e.name.as_ref().unwrap().to_str().unwrap();
         let parent_path = self.descriptors.get(&e.wd).unwrap();
-        let child_name = e.name.unwrap();
-        let child_name = child_name.to_str().expect("All Paths must be utf-8");
-        let path = parent_path.join(child_name).into();
+        let path = parent_path.join(child_name).into_arc_path();
 
         (path, event_data)
     }
+
+   
 }

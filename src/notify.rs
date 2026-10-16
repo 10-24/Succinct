@@ -1,21 +1,21 @@
 mod task;
 mod event_kind;
-mod event;
+pub mod event;
 pub mod walk_dir;
-
+pub mod ephemeral_channel;
 use camino::Utf8Path;
 use debounced::{Debounced, debounced};
 use futures::{FutureExt, Stream, StreamExt};
 use inotify::{EventStream, WatchDescriptor};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use std::{iter, path::Path, sync::Arc, time::Duration};
-use crate::{notify::task::NotifyTask, util::apath::APath};
+use std::{iter, sync::Arc, time::Duration};
+use crate::{notify::{event::Event, task::NotifyTask}, util::arc_path::ArcPath};
 use tokio_util::sync::PollSender;
 use futures::SinkExt;
 use rustc_hash::FxHashMap;
 pub use event_kind::EventKind;
-pub use event::{Event, EventData};
+
 
 #[derive(Debug)]
 pub enum Command {
@@ -42,23 +42,21 @@ impl Notify {
         Self { cmd_tx, event_stream }
     }
 
-    pub async fn watch_dir(&self, path: Arc<Utf8Path>) {
-        let cmd = Command::WatchDir(path);
-        self.cmd_tx.send(cmd).await.unwrap();
-    }
+  
 
     pub async fn unwatch_dir(&self, path: Arc<Utf8Path>) {
         let cmd = Command::UnwatchDir(path);
         self.cmd_tx.send(cmd).await.unwrap();
     }
 
-    pub async fn drain_deltas(&mut self) -> impl Iterator<Item = Delta> + '_ {
+    pub async fn drain_deltas(&mut self) -> impl Iterator<Item = Event> + '_ {
         let first = self.event_stream.next().await;
         let rest = iter::from_fn(move || self.event_stream.next().now_or_never().flatten());
+        
         first.into_iter().chain(rest)
     }
 
-    pub fn watch_dirs(&self, stream: impl Stream<Item = APath> + Send + 'static) {
+    pub fn watch_dirs_stream(&self, stream: impl Stream<Item = ArcPath> + Send + 'static) {
         let cmd_sink = PollSender::new(self.cmd_tx.clone());
     
         tokio::spawn(async move {
@@ -67,6 +65,14 @@ impl Notify {
                 .forward(cmd_sink)
                 .await;
         });
+    }
+
+    pub async fn watch_dirs(&self, paths: impl IntoIterator<Item = ArcPath>) {
+        let mut paths = paths.into_iter();
+        while let Some(path) = paths.next() {
+            let cmd = Command::WatchDir(path);
+            self.cmd_tx.send(cmd).await.unwrap();
+        }
     }
 }
 
