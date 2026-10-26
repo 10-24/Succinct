@@ -2,27 +2,16 @@
 
 let
   inherit (lib) mkEnableOption mkOption mkIf types getExe;
-  cfg = config.services.my-rust-app;
+  cfg = config.services.succinct;
 in {
   options.services.succinct = {
     enable = mkEnableOption "Succinct background service";
 
     package = mkOption {
       type = types.package;
-      description = "The succinct package to use.";
+      description = "Automatically synchronizes a folder to the cloud.";
     };
 
-    verbosity = mkOption {
-      type = types.enum [ "error" "warn" "info" "debug" ];
-      default = "info";
-      description = "Logging verbosity.";
-    };
-
-    extraArgs = mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      description = "Extra CLI arguments to pass to the binary.";
-    };
   };
 
   config = mkIf cfg.enable {
@@ -32,7 +21,7 @@ in {
     # Background service (systemd user daemon)
     systemd.user.services.my-rust-app = {
       Unit = {
-        Description = "My Rust App Background Daemon";
+        Description = cfg.package.description;
         After = [ "network.target" ];
       };
 
