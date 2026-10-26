@@ -70,7 +70,7 @@ impl TempFile {
         EmptyTempFile::create(dest).await
     }
 
-    pub fn replace(self) -> io::Result<()> {
+    pub fn save(self) -> io::Result<()> {
         linkat(
             &self.fd,
             "",

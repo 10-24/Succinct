@@ -62,8 +62,3 @@ macro_rules! declare_paths {
     };
 
 }
-
-
-
-
-

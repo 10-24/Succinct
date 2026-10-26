@@ -14,10 +14,8 @@ pub fn stage_deltas(ctx: &ContextInner, events: FxHashMap<ArcPath, EventData>,) 
         for (e_path, e_data) in events {
             let rel_path = e_path.strip_prefix(ctx.config.sync_dir.as_str()).unwrap().as_str();
     
-            let new_entry = Entry {
-                modified_at: e_data.timestamp.timestamp_millis(),
-                is_deleted: e_data.kind.is_delete(),
-            };
+            let new_entry = Entry::new(e_data.timestamp.timestamp_millis(),e_data.kind.delta().is_delete());
+            
             
             table.insert(rel_path,new_entry).unwrap();
         }

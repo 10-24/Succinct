@@ -73,5 +73,3 @@ impl IntoArcPath for &ArcPath {
 }
 
 
-
-

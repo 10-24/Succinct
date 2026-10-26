@@ -2,14 +2,17 @@ use log::{info, warn};
 use redb::{Database, ReadableDatabase, ReadableTable};
 use tokio::io;
 use object_store::{self as obj, GetResult, ObjectStoreExt};
+use tokio_util::bytes::Bytes;
 use crate::{
-    context::ContextInner, database::{db::Db, table::State, table_trait::Txn as _}, event_loop::pull_remote::find_deltas::{find_remote_deltas}, remote_drive::{self, RemoteDriveError}
+    context::Context, database::{db::Db, table::State, table_trait::Txn as _}, event_loop::{ignored_events::IgnoredEvents, pull_remote::{find_deltas::find_remote_deltas, write_deltas::write_deltas}}, remote_drive::{self, RemoteDriveError}
 };
 
 
-pub async fn pull_remote_deltas(ctx: &ContextInner) -> anyhow::Result<bool> {
-    let Some(remote_state) = fetch_remote_state(ctx).await.map(Some).or_else(handle_remote_state_error)? else {
-        return Ok(false);
+pub async fn pull_remote_deltas(ctx: &Context) -> IgnoredEvents {
+    
+    let remote_state_opt = fetch_remote_state(ctx).await.map(Some).or_else(handle_remote_state_error).unwrap();
+    let Some(remote_state) = remote_state_opt else {
+        return IgnoredEvents::new();
     };
 
     let local_txn = ctx.db.state.begin_write().unwrap();
@@ -20,18 +23,17 @@ pub async fn pull_remote_deltas(ctx: &ContextInner) -> anyhow::Result<bool> {
             let remote_state_table = remote_txn.open::<State>().unwrap();
             find_remote_deltas(&remote_state_table,&local_state_table)
         };
-
         
-
+        let successful_deltas = write_deltas(ctx, remote_deltas).await;
         
     }
     local_txn.commit().unwrap();
-    Ok(())
+    Ok(true)
 }
 
-async fn fetch_remote_state(ctx: &ContextInner) -> obj::Result<Database> {
+async fn fetch_remote_state(ctx: &Context) -> obj::Result<Database> {
     let path = ctx.paths.remote_state();
-    let bytes = ctx.object_store.get(path).await?.bytes().await?;
+    let bytes: &Bytes = ctx.object_store.get(path).await?.bytes().await?;
     Ok(Db::from_bytes(&bytes).unwrap())
 }
 

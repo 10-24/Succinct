@@ -1,15 +1,12 @@
 use std::sync::Arc;
 use async_walkdir::{DirEntry, Error, Filtering, WalkDir};
 use futures::{FutureExt, Stream};
-use globset::GlobSet;
 
 
-use crate::util::arc_path::ArcPath;
+use crate::util::{arc_path::ArcPath, globs::Globs};
 
 
-
-
-pub fn walk_dir(root: ArcPath, exclude: Arc<GlobSet>) -> impl Stream<Item = Result<DirEntry, Error>> {
+pub fn walk_dir(root: ArcPath, exclude: Arc<Globs>) -> impl Stream<Item = Result<DirEntry, Error>> {
     let filter_fn = move |entry| {
         let exclude = exclude.clone();
         async move { filter(&exclude, entry).await }.boxed()
@@ -18,9 +15,8 @@ pub fn walk_dir(root: ArcPath, exclude: Arc<GlobSet>) -> impl Stream<Item = Resu
 }
 
 
-
-async fn filter(exclude: &GlobSet, entry: DirEntry) -> Filtering {
-    if exclude.is_match(entry.path()) {
+async fn filter(exclude: &Globs, entry: DirEntry) -> Filtering {
+    if exclude.matches_std_path(entry.path()) {
         return Filtering::IgnoreDir;
     }
     

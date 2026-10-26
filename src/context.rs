@@ -14,9 +14,8 @@ use crate::{
         config::{Config, RemoteConfig},
         machine_id::MachineId,
     },
-    database::db::Db,
+    database::db::Db, util::{arc_path::{ArcPath, IntoArcPath}, globs::Globs},
 };
-use redb::Database;
 use tokio::{fs, io, join, try_join};
 pub mod app_paths;
 pub mod config;
@@ -26,18 +25,16 @@ pub mod machine_id;
 
 #[derive(Clone, Deref)]
 pub struct Context(Arc<ContextFields>);
-
 struct ContextFields {
     pub config: Config,
     pub machine_id: MachineId,
-    pub exclude: Arc<GlobSet>,
+    pub exclude: Arc<Globs>,
     pub object_store: AmazonS3,
     pub paths: AppPaths,
     pub db: Databases,
-    
 }
 
-impl Context{
+impl Context {
     pub async fn load() -> Result<Context> {
         
         let config_file = AppPaths::config_file();
@@ -47,7 +44,7 @@ impl Context{
         let paths = AppPaths::new(&config).await?;
         let object_store = Self::create_object_store(&config.remote)?;
 
-        let exclude = Self::create_exclude(&config.exclude)?.into();
+        let exclude = Globs::new(config.sync_dir.clone(),&config.exclude)?.into();
         let databases = Self::create_databases(&paths).await?;
         
         let fields = ContextFields {
@@ -70,14 +67,6 @@ impl Context{
             .with_context(|| format!("Failed to deserialize config ({})",path.to_string_lossy()))
     }
 
-    fn create_exclude(globs: &[impl AsRef<str>]) -> Result<GlobSet> {
-        let mut builder = GlobSetBuilder::new();
-        for glob_str in globs {
-            let glob = Glob::new(glob_str.as_ref())?;
-            builder.add(glob);
-        }
-        Ok(builder.build()?)
-    }
 
     fn create_object_store(config: &RemoteConfig) -> object_store::Result<AmazonS3> {
         let http_client_opts = object_store::ClientOptions::new()

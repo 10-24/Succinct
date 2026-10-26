@@ -1,17 +1,19 @@
-use std::ffi::{OsString};
+use std::{collections::BTreeSet, ffi::OsString, io, ops::{Bound, Range, RangeInclusive}, time::{Duration, SystemTime}};
 
-use chrono::Utc;
-use inotify::Inotify;
-use log::warn;
+use chrono::{DateTime, Utc};
+use globset::Candidate;
+use inotify::{Inotify, WatchDescriptor};
+use log::{error, warn};
 use rustc_hash::FxHashMap;
 use strum::VariantArray;
 use tokio::{select, sync::mpsc};
 use tokio_stream::StreamExt;
 
-use crate::{notify::{Command, Descriptors, EventKind, INotifyStream, event::{Event, EventData}}, util::arc_path::IntoArcPath};
+use crate::{notify::{Command, EventKind, INotifyStream, event::{Event, EventData, IgnoredEvent}}, util::{arc_path::{ArcPath, IntoArcPath}, bimap::BiMap}};
 
 pub struct NotifyTask {
-    descriptors: Descriptors,
+    descriptors: BiMap<WatchDescriptor, ArcPath>,
+    ignored_events: BTreeSet<IgnoredEvent>,
     notify_stream: INotifyStream,
 }
 
@@ -20,7 +22,8 @@ impl NotifyTask {
         let buf = vec![0u8; 2048].into_boxed_slice();
         let (event_tx, event_rx) = mpsc::channel(48);
         let task = Self {
-            descriptors: FxHashMap::default(),
+            descriptors: BiMap::new(),
+            ignored_events: BTreeSet::new(),
             notify_stream: Inotify::init().unwrap().into_event_stream(buf).unwrap(),
         };
 
@@ -34,8 +37,9 @@ impl NotifyTask {
                 Some(command) = cmd_rx.recv() =>
                     self.execute_command(command),
                 Some(inotify_event) = self.notify_stream.next() => {
-                    let event = self.handle_event(inotify_event.unwrap());
-                    event_tx.send(event).await;
+                    if let Some(event) = self.handle_event(inotify_event) {
+                        event_tx.send(event).await;
+                    }
                 }
             }
         }
@@ -55,22 +59,20 @@ impl NotifyTask {
             }
             Command::UnwatchDir(target_path) => {
                 self.descriptors
-                    .extract_if(|_, path| 
-                        path.starts_with(target_path.as_std_path())
-                    ).for_each(|(descriptor, _)| {
-                        _ = self.notify_stream.watches().remove(descriptor)
-                    });
+                    .remove_by_value(&target_path);
             }
+            
         }
     }
     
-    fn handle_event(&mut self, inotify_event: inotify::Event<OsString>) -> Event {
-    
-        let event = self.convert_event(&inotify_event);
-        if event.1.kind.is_delete() {
-            self.descriptors.remove(&inotify_event.wd);
+    fn handle_event(&mut self, inotify_event: Result<inotify::Event<OsString>, io::Error>) -> Option<Event> {
+        match inotify_event {
+            Ok(event) => Some(self.convert_event(&event)),
+            Err(err) => {
+                warn!("failed to handle inotify event: {}", err);
+                None
+            },
         }
-        event
     }
     
     fn convert_event(&self, e: &inotify::Event<OsString>) -> Event {
@@ -78,11 +80,16 @@ impl NotifyTask {
         let event_data = EventData::from_inotify_event(e, timestamp).unwrap();
 
         let child_name = e.name.as_ref().unwrap().to_str().unwrap();
-        let parent_path = self.descriptors.get(&e.wd).unwrap();
+        let parent_path = self.descriptors.get_value(&e.wd).unwrap();
         let path = parent_path.join(child_name).into_arc_path();
 
         (path, event_data)
     }
 
-   
 }
+
+
+
+
+
+

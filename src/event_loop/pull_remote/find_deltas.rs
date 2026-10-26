@@ -28,26 +28,22 @@ fn find(mut r_state_iter: StateIter, mut l_state_iter: StateIter, mut pulls: Rem
     
     
     match PathOrdering::from(r_guard,l_guard) {
-        PathOrdering::Equal { r_entry, l_entry, ..} if !r_entry.is_newer(&l_entry) => {
-            return find(next(r_state_iter), next(l_state_iter), pulls);
+        PathOrdering::Equal { r_entry, l_entry, ..} if !r_entry.is_newer(&l_entry) => { // Same or older version
+            find(next(r_state_iter), next(l_state_iter), pulls)
         },
-        PathOrdering::Equal { path, r_entry, .. } if r_entry.is_deleted() => { // Updated Remotely
-            pulls.delete.push(path.into());
-            return find(next(r_state_iter), next(l_state_iter), pulls);
-        },  
-        PathOrdering::Equal { path, .. } => {
-             pulls.update.push(path.into());
-             return find(next(r_state_iter), next(l_state_iter), pulls);
+        PathOrdering::Equal { path, r_entry, .. } => { // Changed Remotely
+            pulls.push((path.into(), r_entry));
+            find(next(r_state_iter), next(l_state_iter), pulls)
         },
-        PathOrdering::Less{r_path} => { // Created Remotely
-            pulls.update.push(r_path.into());
-            return find(next(r_state_iter), l_state_iter, pulls);
+        PathOrdering::Less{r_path, r_entry} => { // Created Remotely
+            pulls.push((r_path.into(), r_entry));
+            find(next(r_state_iter), l_state_iter, pulls)
         },
-        PathOrdering::Greater{..} => {
-            return find(r_state_iter, next(l_state_iter), pulls);
+        PathOrdering::Greater{..} => { // Created locally
+            find(r_state_iter, next(l_state_iter), pulls)
         },
         PathOrdering::End => {
-            return pulls
+            pulls
         },
     }
 }
@@ -67,9 +63,11 @@ enum PathOrdering<'a> {
     },
     Less {
         r_path: &'a str,
+        r_entry: Entry,
     },
     Greater {
         l_path: &'a str,
+        l_entry: Entry,
     },
     End
 }
@@ -78,21 +76,21 @@ impl PathOrdering<'_> {
     fn from<'b>(r: Option<&'b EntryKVGuard<'_>>, l: Option<&'b EntryKVGuard<'_>>) -> PathOrdering<'b> {
         let (r_guard, l_guard) = match (r, l) {
             (Some(remote), Some(local)) => (remote,local),
-            (Some((remote_path,_)), None) => return PathOrdering::Less{r_path: remote_path.value()},
-            (None, Some((local_path,_))) => return PathOrdering::Greater{l_path: local_path.value()},
+            (Some((r_path,r_entry)), None) => return PathOrdering::Less{r_path: r_path.value(), r_entry: r_entry.value()},
+            (None, Some((l_path,l_entry))) => return PathOrdering::Greater{l_path: l_path.value(), l_entry: l_entry.value()},
             (None, None) => return PathOrdering::End,
         };
     
-        let (remote_path, remote_entry) = r_guard;
-        let remote_path = remote_path.value();
+        let (r_path, r_entry) = r_guard;
+        let r_path = r_path.value();
         
-        let (local_path, local_entry) = l_guard;
-        let local_path = local_path.value();
+        let (l_path, l_entry) = l_guard;
+        let l_path = l_path.value();
         
-        match remote_path.cmp(local_path) {
-            Ordering::Equal => PathOrdering::Equal { path: remote_path, r_entry: remote_entry.value(), l_entry:local_entry.value() },
-            Ordering::Greater => PathOrdering::Greater { l_path: local_path },
-            Ordering::Less => PathOrdering::Less { r_path: remote_path },
+        match r_path.cmp(l_path) {
+            Ordering::Equal => PathOrdering::Equal { path: r_path, r_entry: r_entry.value(), l_entry:l_entry.value() },
+            Ordering::Greater => PathOrdering::Greater { l_path, l_entry: l_entry.value() },
+            Ordering::Less => PathOrdering::Less { r_path, r_entry: r_entry.value() },
         }
     }
 }

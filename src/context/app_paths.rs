@@ -7,26 +7,28 @@ use directories::{BaseDirs, ProjectDirs};
 use object_store::path::Path as ObjPath;
 use tokio::{fs, io};
 
-use crate::{constants, context::config::Config, util::arc_path::{ArcPath, IntoArcPath}};
+use crate::{constants, context::config::Config, util::{arc_path::{ArcPath, IntoArcPath}, rel_path::{RelPath, RelPathManager}}};
 
 
 type FilePath = Box<Utf8Path>;
 type DirPath = Utf8PathBuf;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AppPaths {
-    sync_dir: ArcPath,
-    remote_state: ObjPath,
+    pub sync_dir: RelPathManager,
+    remote_state: RelPath,
     tmp_dir: ArcPath,
     tmp_dir_handle: Arc<TempDir>,
 }
 
 impl AppPaths {
     pub async fn new(config: &Config) -> io::Result<Self> {
-        let sync_dir = config.sync_dir.clone();
-        let remote_state = ObjPath::from(constants::fs::sync::sync_data::state_db::PATH);
         
-        let sync_data_dir = sync_dir.join(constants::fs::sync::sync_data::PATH);
+        let sync_dir = RelPathManager::new(config.sync_dir.clone());
+        
+        let remote_state = RelPath::from(constants::fs::sync::sync_data::state_db::PATH);
+        
+        let sync_data_dir = sync_dir.join_str(constants::fs::sync::sync_data::PATH);
         let tmp_dir_handle = Arc::from(Self::create_tmp_dir(&sync_data_dir).await?);
         let tmp_dir = tmp_dir_handle.to_path_buf().into_arc_path();
         
@@ -43,9 +45,7 @@ impl AppPaths {
         ProjectDirs::from("", constants::ORGANIZATION, constants::APP_NAME).unwrap()
     }
     
-    fn with_sync_data_dir(sync_dir: &Utf8Path) -> DirPath {
-        sync_dir.join(constants::fs::sync::sync_data::PATH)
-    }
+
     
     async fn create_tmp_dir(sync_data_dir: &Utf8Path) -> io::Result<TempDir> {
         
@@ -55,7 +55,7 @@ impl AppPaths {
             Err(e) => panic!("Unhandled TempDir Error: {e}")
         }
     }
-    pub fn remote_state(&self) -> &ObjPath {
+    pub fn remote_state(&self) -> &RelPath {
         &self.remote_state
     }
 
@@ -75,14 +75,13 @@ impl AppPaths {
         Self::base_dirs().home_dir().join(constants::fs::CONFIG_NAME)
     }
 
-    pub fn sync_data_dir(&self) -> DirPath {
-        Self::with_sync_data_dir(&self.sync_dir)
-    }
-
     pub fn tmp_dir(&self) -> &Utf8Path {
         &self.tmp_dir
     }
 
+    pub fn from_sync_dir(&self, relpath: &str) -> FilePath {
+        self.sync_dir.join(relpath).into()
+    }
   
 }
 

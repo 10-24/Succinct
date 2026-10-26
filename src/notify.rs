@@ -1,8 +1,10 @@
 mod task;
-mod event_kind;
+pub mod event_kind;
 pub mod event;
 pub mod walk_dir;
 pub mod ephemeral_channel;
+
+
 use camino::Utf8Path;
 use debounced::{Debounced, debounced};
 use futures::{FutureExt, Stream, StreamExt};
@@ -10,7 +12,7 @@ use inotify::{EventStream, WatchDescriptor};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use std::{iter, sync::Arc, time::Duration};
-use crate::{notify::{event::Event, task::NotifyTask}, util::arc_path::ArcPath};
+use crate::{notify::{event::{Event, IgnoredEvent}, task::NotifyTask}, util::arc_path::ArcPath};
 use tokio_util::sync::PollSender;
 use futures::SinkExt;
 use rustc_hash::FxHashMap;
@@ -20,11 +22,10 @@ pub use event_kind::EventKind;
 #[derive(Debug)]
 pub enum Command {
     WatchDir(Arc<Utf8Path>),
-    UnwatchDir(Arc<Utf8Path>)
+    UnwatchDir(Arc<Utf8Path>),
 }
 
 type INotifyStream = EventStream<Box<[u8]>>;
-type Descriptors = FxHashMap<WatchDescriptor, Arc<Utf8Path>>;
 
 
 pub struct Notify {
@@ -44,10 +45,6 @@ impl Notify {
 
   
 
-    pub async fn unwatch_dir(&self, path: Arc<Utf8Path>) {
-        let cmd = Command::UnwatchDir(path);
-        self.cmd_tx.send(cmd).await.unwrap();
-    }
 
     pub async fn drain_deltas(&mut self) -> impl Iterator<Item = Event> + '_ {
         let first = self.event_stream.next().await;
@@ -70,10 +67,20 @@ impl Notify {
     pub async fn watch_dirs(&self, paths: impl IntoIterator<Item = ArcPath>) {
         let mut paths = paths.into_iter();
         while let Some(path) = paths.next() {
-            let cmd = Command::WatchDir(path);
-            self.cmd_tx.send(cmd).await.unwrap();
+            self.watch_dir(path).await
         }
     }
+
+    pub async fn watch_dir(&self, path: ArcPath) {
+        let cmd = Command::WatchDir(path);
+        self.cmd_tx.send(cmd).await.unwrap();
+    }
+    
+    pub async fn unwatch_dir(&self, path: ArcPath) {
+        let cmd = Command::UnwatchDir(path);
+        self.cmd_tx.send(cmd).await.unwrap();
+    }
+    
 }
 
 
