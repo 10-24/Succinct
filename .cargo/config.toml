@@ -1,0 +1,2 @@
+[env]
+ENV_NIX_SCHEMA_PATH = { value = "nix/config-schema.nix", relative = true }
