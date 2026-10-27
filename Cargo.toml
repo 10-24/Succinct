@@ -42,5 +42,6 @@ log = "0.4.34"
 async-tempfile = "0.8.0"
 futures-util = "0.3.34"
 nix = { version = "0.31.3", features = ["fs"] }
+serde-nixos = "0.3.1"
 
 

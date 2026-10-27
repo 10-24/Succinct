@@ -1,3 +1,4 @@
+# Flake.nix
 { config, lib, pkgs, ... }:
 
 let

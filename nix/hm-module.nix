@@ -1,3 +1,4 @@
+# nix/hm-module.nix
 self: { config, lib, pkgs, ... }:
 
 let
@@ -18,17 +19,16 @@ in
     };
 
     settings = lib.mkOption {
-      type = tomlFormat.type;
-      default = { };
-      description = "Configuration written to the `${appName}.toml`";
-    };
+          type = lib.types.submodule (import ./nix/config-schema.nix);
+          description = "Configuration for succinct.";
+      };
   };
 
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
 
-    # For interactive CLI use (the app finds it via ProjectDirs)
-    xdg.configFile."${home}/${appName}.toml".source = configFile;
+
+    xdg.configFile."${appName}/config.toml".source = configFile;
 
     systemd.user.services.${appName} = {
       Unit = {
@@ -36,7 +36,6 @@ in
         After = [ "network.target" ];
       };
       Service = {
-        # Explicit path: the service doesn't depend on directory lookup at all
         ExecStart = "${lib.getExe cfg.package} --config ${configFile}";
         Restart = "on-failure";
       };

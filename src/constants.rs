@@ -8,7 +8,7 @@ use crate::constants::fs::app_data;
 
 pub const APP_NAME:&str = env!("CARGO_PKG_NAME");
 pub const ORGANIZATION: &str = "10-24";
-
+pub const NIX_SCHEMA_PATH: &str = "nix/config-schema.nix";
 
 
 pub mod fs {
@@ -39,9 +39,9 @@ pub mod config_default {
     use const_format::concatcp;
     use crate::constants::fs;
 
-    pub const DEBOUNCE_DURATION: Duration = Duration::from_secs(12);
+    pub const DEBOUNCE_DURATION_SECONDS: u16 = 12;
     pub const MAX_RETRIES: u16 = 0;
-    pub const TIMEOUT: Duration = Duration::from_secs(12);
+    pub const TIMEOUT_SECONDS: u16 = 12;
     pub const REQUIRED_EXCLUDE_GLOBS: [&str;1] = [
         fs::sync::sync_data::PATH
     ];

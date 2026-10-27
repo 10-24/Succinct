@@ -13,13 +13,7 @@ use crate::{context::Context, event_loop::{deduplicate_events::deduplicate_event
 
 
 
-mod remote_drive;
-mod event_loop;
-mod database;
-mod constants;
-mod context;
-mod util;
-mod notify;
+
 /*
  * Unimplemented Features:
  * 
@@ -27,9 +21,7 @@ mod notify;
  * Add and remove ignored file from the command line
  * Add check in walk dir for uninitialized files
  * Graceful shutdown
- * 
- * 
- * 
+ * CLI tool to preview synced files. So they don't accidentally sync a bunch of git objects or .venv folders
 
  Steps
 // Pull changes from remote DB, excluding those that collide with local changes
