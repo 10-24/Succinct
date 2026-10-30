@@ -40,4 +40,8 @@ impl RelPathManager {
     pub fn join_str(&self, rel_path: &str) -> Utf8PathBuf {
         self.root.join(rel_path)
     }
+
+    pub fn root(&self) -> &ArcPath {
+        &self.root
+    }
 }

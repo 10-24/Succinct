@@ -22,9 +22,9 @@ pub struct AppPaths {
 }
 
 impl AppPaths {
-    pub async fn new(config: &Config) -> io::Result<Self> {
+    async fn new(project_dirs: ProjectDirs, sync_dir: ArcPath) -> io::Result<Self> {
         
-        let sync_dir = RelPathManager::new(config.sync_dir.clone());
+        let sync_dir = RelPathManager::new(sync_dir.clone());
         
         let remote_state = RelPath::from(constants::fs::sync::sync_data::state_db::PATH);
         
@@ -40,13 +40,7 @@ impl AppPaths {
         })
     }
 
-    
-    fn project_dirs() -> ProjectDirs  {
-        ProjectDirs::from("", constants::ORGANIZATION, constants::APP_NAME).unwrap()
-    }
-    
 
-    
     async fn create_tmp_dir(sync_data_dir: &Utf8Path) -> io::Result<TempDir> {
         
         match TempDir::new_in(sync_data_dir.as_std_path()).await {
@@ -71,9 +65,7 @@ impl AppPaths {
         self.sync_dir.join(constants::fs::sync::sync_data::state_db::PATH).into()
     }
 
-    pub fn config_file() -> PathBuf {
-        Self::base_dirs().home_dir().join(constants::fs::CONFIG_NAME)
-    }
+
 
     pub fn tmp_dir(&self) -> &Utf8Path {
         &self.tmp_dir
@@ -82,6 +74,8 @@ impl AppPaths {
     pub fn from_sync_dir(&self, relpath: &str) -> FilePath {
         self.sync_dir.join(relpath).into()
     }
+
+   
   
 }
 
@@ -95,5 +89,30 @@ impl JoinWith for Utf8PathBuf {
     fn join_with(mut self, path: impl AsRef<Utf8Path>) -> Utf8PathBuf {
         self.push(path);
         self
+    }
+}
+
+pub struct AppPathsBuilder {
+    project_dirs: ProjectDirs,
+    config_file: PathBuf,
+}
+impl AppPathsBuilder {
+    pub fn new() -> Self {
+        let project_dirs = ProjectDirs::from("", constants::ORGANIZATION, constants::APP_NAME).unwrap();
+        let config_file = project_dirs.config_dir().join(constants::fs::CONFIG_NAME);
+        Self {
+            project_dirs,
+            config_file,
+        }
+    }
+
+
+
+    pub async fn build(self, sync_dir: ArcPath) -> io::Result<AppPaths> {
+        AppPaths::new(self.project_dirs, sync_dir).await
+    }
+
+    pub fn config(&self) -> &std::path::Path {
+        &self.config_file
     }
 }

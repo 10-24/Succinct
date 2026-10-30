@@ -2,12 +2,11 @@
 
 
 fn main() {
-    // Call the macro-generated function from your library
+    let path = env!("ENV_NIX_SCHEMA_PATH");
     let nix_schema = succinct::Config::nixos_type_definition();
     
-    // Write it to your nix folder
-    std::fs::write(env!("ENV_NIX_SCHEMA_PATH"),nix_schema)
-        .expect("Failed to write Nix schema");
-        
-    println!("Successfully generated nix/config-schema.nix!");
+    match std::fs::write(path, nix_schema) {
+        Ok(_) => println!("Generated `{}`", path),
+        Err(e) => panic!("Failed to write Nix schema: {}", e),
+    }
 }

@@ -19,9 +19,9 @@ in
     };
 
     settings = lib.mkOption {
-          type = lib.types.submodule (import ./nix/config-schema.nix);
-          description = "Configuration for succinct.";
-      };
+      type = lib.types.submodule (import ./config-schema.nix);
+      description = "Configuration for succinct.";
+    };
   };
 
   config = lib.mkIf cfg.enable {

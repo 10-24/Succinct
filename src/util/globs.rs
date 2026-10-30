@@ -1,24 +1,22 @@
-use std::path::Path;
+use std::{ops::Deref, path::Path};
 
 use camino::Utf8Path;
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use derive_more::{AsRef, Deref};
+use globset::{GlobSet, GlobSetBuilder};
 use log::warn;
+use serde::{Deserialize, Deserializer, de};
 
 use crate::util::arc_path::ArcPath;
-
+#[derive(Debug)]
 pub struct Globs {
     set: GlobSet,
     root: ArcPath,
 }
 
 impl Globs {
-    pub fn new(root: ArcPath, patterns: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self, globset::Error>  {
-        let mut builder = GlobSetBuilder::new();
-        for pat in patterns {
-            let glob = Glob::new(pat.as_ref())?;
-            builder.add(glob);
-        }
-        let set = builder.build()?;
+    pub fn new(root: ArcPath, globs: impl IntoIterator<Item = Glob>) -> Result<Self, globset::Error>  {
+        
+        let set = GlobSet::new(globs)?;
         Ok(Self{set, root})
     }
 
@@ -33,5 +31,49 @@ impl Globs {
             return false;
         };
         self.set.is_match(relpath)
+    }
+}
+
+
+#[derive(Debug, AsRef)]
+pub struct Glob(globset::Glob);
+
+
+impl<'de> Deserialize<'de> for Glob {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let pattern = <&str>::deserialize(deserializer)?;
+                
+        Self::try_from(pattern).map_err(|err| {
+            de::Error::custom(format!("invalid glob pattern {pattern}: {err}"))
+        })
+    }
+}
+
+impl serde_nixos::NixosTypeGenerator for Glob {
+    fn nixos_type_definition() -> String {
+        // Doesn't need a separate type definition block
+        String::new()
+    }
+
+    fn nixos_options() -> String {
+        // No nested options
+        String::new()
+    }
+
+    fn nixos_type() -> String {
+        // Treat as a plain Nix string
+        "types.str".to_string()
+    }
+}
+
+
+impl TryFrom<&str> for Glob {
+    type Error = globset::Error;
+
+    fn try_from(pattern: &str) -> Result<Self, Self::Error> {
+        globset::Glob::new(pattern).map(Self)
     }
 }
