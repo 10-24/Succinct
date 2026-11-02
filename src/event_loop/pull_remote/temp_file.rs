@@ -25,7 +25,7 @@ struct EmptyTempFile {
 }
 
 impl EmptyTempFile {
-    pub async fn create(dest: impl IntoArcPath) -> io::Result<Self> {
+    async fn create(dest: impl IntoArcPath) -> io::Result<Self> {
         let dest = dest.into_arc_path();
         let file = Self::open_file(dest.parent().unwrap()).await?;
         Ok(Self { dest, file })
@@ -52,11 +52,14 @@ impl EmptyTempFile {
             writer.write_all(&chunk).await?;
         }
         writer.flush().await?;
-        let fd = self.file.into_std().await.into();
-        Ok(TempFile {
-            fd,
+        Ok(self.finish_write().await)
+    }
+
+    async fn finish_write(self) -> TempFile {
+        TempFile {
+            fd: self.file.into_std().await.into(),
             dest: self.dest,
-        })
+        }
     }
 }
 
@@ -69,7 +72,8 @@ impl TempFile {
     pub async fn create(dest: impl IntoArcPath) -> io::Result<EmptyTempFile> {
         EmptyTempFile::create(dest).await
     }
-
+    
+    // Write permanently to the destination path
     pub fn save(self) -> io::Result<()> {
         linkat(
             &self.fd,

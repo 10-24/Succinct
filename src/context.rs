@@ -11,9 +11,9 @@ use std::{path::Path, sync::Arc};
 use crate::{
     context::{
         app_paths::{AppPaths, AppPathsBuilder}, config::{Config, RemoteConfig, config::{Config, RemoteConfig}}, machine_id::MachineId,
-    }, database::db::Db, util::{arc_path::{ArcPath, IntoArcPath}, globs::Globs},
+    }, database::db::Db, util::{arc_path::{ArcPath}, globs::Globs},
 };
-use tokio::{fs, io, join, try_join};
+use tokio::{fs, io, try_join};
 pub mod app_paths;
 pub mod config;
 pub mod machine_id;
@@ -35,7 +35,7 @@ impl Context {
     pub async fn load() -> Result<Context> {
         
         let paths_builder = AppPathsBuilder::new();
-        let config_path = paths_builder.config();
+        let config_path = paths_builder.config_file();
         let ((sync_dir, config), machine_id) = try_join!(Self::read_config(config_path), Self::read_machine_id())?;
     
         let paths = paths_builder.build(sync_dir).await;

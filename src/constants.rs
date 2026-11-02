@@ -12,21 +12,26 @@ pub const NIX_SCHEMA_PATH: &str = "nix/config-schema.nix";
 
 
 pub mod fs {
-    use const_format::concatcp;
-    use crate::{constants::APP_NAME, declare_paths};
+    use crate::{declare_paths};
 
-    pub const CONFIG_NAME: &str = "config.toml";
     
     declare_paths! {
         sync {
             // ... User Files
             sync_data: ".sync-data" {
-                // tmp_dir. (Randomly Named)
                 state_db: "state.db";
-                staged_deltas_db: "staged-deltas.db";
             }
         }
+        
+        app_config {
+            config: "config.toml";
+        }
+        app_data {
+            staged_deltas: "staged-deltas.db"; 
+        }
     }
+
+   
 }
 
 

@@ -1,3 +1,4 @@
+/// Root Dir is discluded in the `PATH`
 #[macro_export]
 macro_rules! declare_paths {
 
@@ -10,14 +11,20 @@ macro_rules! declare_paths {
     };
 
     // Subtree with nested children: e.g., sync_data { ... } optionally followed by ';'
-    ($name:ident {$($sub:tt)* }) => {
+    ( $( $name:ident $(: $alias: literal)? { $($sub:tt)* } )+ ) => {
+        $(
+            crate::declare_paths!(@root $name $(: $alias)? { $($sub)* });
+        )+
+    };
+    
+    (@root $name:ident {$($sub:tt)* }) => {
         pub mod $name {
             const PATH: &str = "";
             crate::declare_paths!(@inner $($sub)*);
         }
     };
     
-    ($name:ident : $alias: literal {$($sub:tt)* }) => {
+    (@root $name:ident : $alias: literal {$($sub:tt)* }) => {
         pub mod $name {
             const PATH: &str = "";
             crate::declare_paths!(@inner $($sub)*);
